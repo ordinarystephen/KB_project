@@ -8,12 +8,8 @@ from typing import Any
 from .config import Settings
 from .json_utils import load_json
 from .llm_client import LLMClient
-from .policy_kb_store import (
-    apply_policy_identity,
-    load_policy_kb,
-    record_stage,
-    save_policy_kb,
-)
+from .normalization import normalize_follow_up_items, normalize_policy_rules
+from .policy_kb_store import load_policy_kb, record_stage, save_policy_kb
 
 
 def enrich_policy_kb(
@@ -41,22 +37,22 @@ def enrich_policy_kb(
         },
     )
     new_rules = content.get("rules")
+    extra_follow_ups: list = []
     if new_rules:  # never let an empty/absent enrichment response wipe existing rules
-        for rule in new_rules:
-            rule.setdefault("human_review_status", "pending_review")
-            rule.setdefault("implementation_readiness", "needs_human_review")
         policy = kb["policy"]
-        apply_policy_identity(
-            new_rules,
-            {
-                "policy_id": policy["policy_id"],
-                "policy_name": policy["policy_name"],
-                "policy_version": policy["policy_version"],
-            },
-            policy["document_name"],
+        policy_meta = {
+            "policy_id": policy["policy_id"],
+            "policy_name": policy["policy_name"],
+            "policy_version": policy["policy_version"],
+        }
+        kb["rules"], extra_follow_ups = normalize_policy_rules(
+            new_rules, policy_meta, policy["document_name"]
         )
-        kb["rules"] = new_rules
-    kb["follow_up_items"] = content.get("follow_up_items", kb["follow_up_items"])
+    follow_ups = content.get("follow_up_items")
+    if follow_ups is not None:
+        kb["follow_up_items"] = normalize_follow_up_items(follow_ups) + extra_follow_ups
+    elif extra_follow_ups:
+        kb["follow_up_items"] = kb["follow_up_items"] + extra_follow_ups
     record_stage(
         kb, settings, stage="enrich", status="enriched", prompt_name="policy_kb_enrichment.md"
     )

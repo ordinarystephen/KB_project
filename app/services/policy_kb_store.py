@@ -96,25 +96,6 @@ def load_policy_kb(path: Path) -> dict[str, Any]:
     return load_yaml(path)
 
 
-def apply_policy_identity(
-    rules: list[dict[str, Any]], policy_meta: dict[str, Any], document_name: str
-) -> list[dict[str, Any]]:
-    """Force each rule's primary policy_source identity to the authoritative values.
-
-    The LLM owns the section/page/quote of a citation, but the policy identity is a known fact;
-    overwriting it keeps every citation traceable to the correct policy regardless of model drift.
-    """
-    for rule in rules:
-        source = rule.get("policy_source")
-        if isinstance(source, dict):
-            source["policy_id"] = policy_meta["policy_id"]
-            source["policy_name"] = policy_meta["policy_name"]
-            source["document_name"] = document_name
-            if not source.get("policy_version"):
-                source["policy_version"] = policy_meta.get("policy_version", "")
-    return rules
-
-
 def archive_if_protected(path: Path) -> Path | None:
     """Archive an existing non-draft KB before overwrite so human work is never silently lost.
 

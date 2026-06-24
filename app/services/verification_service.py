@@ -9,6 +9,7 @@ from .config import Settings
 from .file_utils import relative_to_project
 from .json_utils import save_json
 from .llm_client import LLMClient
+from .normalization import normalize_verification
 from .policy_kb_store import load_policy_kb, record_stage, save_policy_kb
 from .workflow_utils import validate_or_log
 
@@ -31,7 +32,8 @@ def verify_policy_kb(
             "reviewed_policy_kb": relative_to_project(policy_kb_path, settings),
         },
     )
-    # The path is an authoritative fact, not the model's to decide: override any value it returned.
+    # Fill structurally-required fields a live model may omit, then assert the authoritative path.
+    result = normalize_verification(result)
     result["reviewed_policy_kb"] = relative_to_project(policy_kb_path, settings)
     validate_or_log(
         result,

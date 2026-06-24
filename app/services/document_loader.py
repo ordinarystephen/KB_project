@@ -94,7 +94,9 @@ def _read_with_document_intelligence(content: bytes, endpoint: str) -> str:
         raise RuntimeError("Azure Document Intelligence dependencies are not installed") from exc
 
     from .azure_auth import get_azure_credential
+    from .proxy_utils import ensure_direct_connection
 
+    ensure_direct_connection(endpoint)
     credential = get_azure_credential()
     client = DocumentIntelligenceClient(endpoint=endpoint, credential=credential)
     poller = client.begin_analyze_document(

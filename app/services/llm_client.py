@@ -295,16 +295,6 @@ _PROMPT_NAMES = {
     "group": "policy_kb_consolidation.md",
 }
 
-_EXTRACT_ENRICH_SCHEMA = {
-    "title": "policy_kb_content",
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["rules", "follow_up_items"],
-    "properties": {
-        "rules": {"type": "array"},
-        "follow_up_items": {"type": "array"},
-    },
-}
 _GROUP_SCHEMA = {
     "title": "rule_groups",
     "type": "object",
@@ -327,7 +317,9 @@ class AzureOpenAILLMClient(LLMClient):
         from langchain_openai import AzureChatOpenAI
 
         from .azure_auth import get_cognitive_services_token_provider
+        from .proxy_utils import ensure_direct_connection
 
+        ensure_direct_connection(self.settings.azure_openai_endpoint)
         return AzureChatOpenAI(
             azure_endpoint=self.settings.azure_openai_endpoint,
             azure_deployment=self.settings.azure_openai_deployment,
@@ -359,13 +351,27 @@ class AzureOpenAILLMClient(LLMClient):
         raise ValueError(f"Unsupported LLM operation: {operation}")
 
     def _output_schema(self, operation: str) -> dict[str, Any]:
+        from .json_utils import load_json
+
         if operation in {"extract", "enrich"}:
-            return _EXTRACT_ENRICH_SCHEMA
+            # Guide the model with the real nested rule shape (reusing the per-policy schema's
+            # definitions) so it returns complete, validatable rule objects. strict=False, so the
+            # minItems/minLength constraints are guidance and the normalization layer is the net.
+            kb_schema = load_json(self.settings.schemas_dir / "policy_kb.schema.json")
+            return {
+                "title": "policy_kb_content",
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["rules", "follow_up_items"],
+                "properties": {
+                    "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
+                    "follow_up_items": {"type": "array", "items": {"$ref": "#/$defs/followUpItem"}},
+                },
+                "$defs": kb_schema["$defs"],
+            }
         if operation == "group":
             return _GROUP_SCHEMA
         if operation == "verify":
-            from .json_utils import load_json
-
             return load_json(self.settings.schemas_dir / "policy_verification.schema.json")
         raise ValueError(f"Unsupported LLM operation: {operation}")
 
@@ -399,7 +405,9 @@ class AzureOpenAILLMClient(LLMClient):
         from langchain_openai import AzureOpenAIEmbeddings
 
         from .azure_auth import get_cognitive_services_token_provider
+        from .proxy_utils import ensure_direct_connection
 
+        ensure_direct_connection(self.settings.azure_openai_endpoint)
         embeddings = AzureOpenAIEmbeddings(
             azure_endpoint=self.settings.azure_openai_endpoint,
             azure_deployment=self.settings.azure_openai_embedding_deployment,

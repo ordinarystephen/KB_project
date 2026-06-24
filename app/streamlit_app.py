@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -37,9 +38,21 @@ SETTINGS = Settings()
 
 
 @st.cache_resource
-def get_client():
-    """Construct one provider client per Streamlit process."""
+def _build_client(mode, endpoint, deployment, embedding, api_version, di_endpoint):
+    """Cached per distinct Azure configuration; the args ARE the cache key."""
     return create_llm_client(SETTINGS)
+
+
+def get_client():
+    """Return the client for the active settings, rebuilding it if any Azure setting changed."""
+    return _build_client(
+        SETTINGS.llm_mode,
+        SETTINGS.azure_openai_endpoint,
+        SETTINGS.azure_openai_deployment,
+        SETTINGS.azure_openai_embedding_deployment,
+        SETTINGS.azure_openai_api_version,
+        SETTINGS.document_intelligence_endpoint,
+    )
 
 
 def _yaml_files(folder: Path) -> list[Path]:
@@ -54,7 +67,8 @@ def _record_error(operation: str, error: Exception) -> None:
     SETTINGS.logs_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     path = SETTINGS.logs_dir / f"{operation}-{timestamp}.log"
-    path.write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
+    detail = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    path.write_text(detail, encoding="utf-8")
     st.error(f"{operation} failed: {error}")
     st.caption(f"Error saved to {relative_to_project(path, SETTINGS)}")
 

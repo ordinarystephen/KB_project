@@ -1,14 +1,16 @@
 """Regression tests for hardening fixes (Azure-shaped failure modes, data-loss guards)."""
 
+import os
 from pathlib import Path
 
 from app.services.document_loader import extract_document, save_uploaded_document
 from app.services.enrichment_service import enrich_policy_kb
 from app.services.extraction_service import extract_policy_rules
 from app.services.file_utils import ensure_output_folders, relative_to_project
-from app.services.json_utils import load_json
+from app.services.json_utils import load_json, validate_json
 from app.services.llm_client import SimulatedLLMClient
 from app.services.policy_kb_store import load_policy_kb
+from app.services.proxy_utils import ensure_direct_connection
 from app.services.verification_service import verify_policy_kb
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -46,6 +48,30 @@ class _TamperedIdentityClient(SimulatedLLMClient):
             rule["policy_source"]["policy_name"] = "Tampered Name"
             rule["policy_source"]["document_name"] = "tampered.txt"
         return result
+
+
+class _IncompleteExtractClient(SimulatedLLMClient):
+    """Simulates a model that omits most structurally-required rule fields."""
+
+    def _extract(self, payload):
+        return {
+            "rules": [
+                {
+                    "rule_name": "Sparse rule",
+                    "rule_type": "documentation_requirement",
+                    "requirement": "A credit memo is required.",
+                    "policy_source": {"section": "1", "page": 3, "quote": "memo required"},
+                }
+            ],
+            "follow_up_items": [{"description": "check this later"}],
+        }
+
+
+class _MinimalVerifyClient(SimulatedLLMClient):
+    """Simulates a verification response missing processing_summary and the array fields."""
+
+    def _verify(self, payload):
+        return {"ready_for_consolidation": True}
 
 
 def test_verify_overrides_model_supplied_reviewed_path(settings) -> None:
@@ -104,3 +130,50 @@ def test_extracted_text_paths_do_not_collide_on_slug(settings) -> None:
     assert r1.extracted_text_path != r2.extracted_text_path
     first_text = (settings.project_root / r1.extracted_text_path).read_text(encoding="utf-8")
     assert first_text.strip() == "First document body."
+
+
+def test_extraction_normalizes_incomplete_model_rules(settings) -> None:
+    ensure_output_folders(settings)
+    kb, _ = _extract("sample_policy_alpha.txt", "Alpha", settings, _IncompleteExtractClient())
+    validate_json(kb, settings.schemas_dir / "policy_kb.schema.json")  # must not hard-fail
+    rule = kb["rules"][0]
+    assert rule["rule_id"] == "alpha-rule-001"
+    assert rule["condition_logic"]["logic_type"] == "all"
+    assert set(rule["expected_output"]) == {"pass_message", "fail_message", "exception_message"}
+    assert set(rule["applies_to"]) == {
+        "products",
+        "portfolios",
+        "borrower_types",
+        "transaction_types",
+        "regions",
+    }
+    assert rule["policy_source"]["policy_id"] == "alpha"
+    assert rule["policy_source"]["page"] == 3
+    assert kb["follow_up_items"][0]["status"] == "open"
+
+
+def test_verification_normalizes_incomplete_summary(settings) -> None:
+    ensure_output_folders(settings)
+    _, kb_path = _extract("sample_policy_alpha.txt", "Alpha", settings, SimulatedLLMClient())
+    result, _ = verify_policy_kb(kb_path, _MinimalVerifyClient(), settings)
+    validate_json(result, settings.schemas_dir / "policy_verification.schema.json")
+    assert set(result["processing_summary"]) >= {
+        "main_takeaways",
+        "potential_gaps",
+        "high_priority_reviewer_issues",
+        "ready_for_consolidation",
+        "usable_for_credit_documentation_checks",
+        "recommended_next_steps",
+    }
+    assert result["missing_rules"] == []
+    assert result["ready_for_consolidation"] is True
+
+
+def test_ensure_direct_connection_adds_loopback_and_host(monkeypatch) -> None:
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    ensure_direct_connection("https://myresource.openai.azure.com/")
+    no_proxy = os.environ["NO_PROXY"]
+    assert "localhost" in no_proxy
+    assert "myresource.openai.azure.com" in no_proxy
+    assert os.environ["no_proxy"] == no_proxy
