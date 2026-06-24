@@ -9,7 +9,12 @@ from .config import Settings
 from .document_loader import DocumentRecord
 from .file_utils import stable_slug
 from .llm_client import LLMClient
-from .policy_kb_store import build_policy_kb, save_policy_kb
+from .policy_kb_store import (
+    apply_policy_identity,
+    archive_if_protected,
+    build_policy_kb,
+    save_policy_kb,
+)
 
 
 def extract_policy_rules(
@@ -36,10 +41,14 @@ def extract_policy_rules(
             "policy_metadata": policy_meta,
         },
     )
-    for rule in content.get("rules", []):
+    rules = content.get("rules", [])
+    for rule in rules:
         rule["human_review_status"] = "pending_review"
         rule.setdefault("implementation_readiness", "needs_human_review")
+    apply_policy_identity(rules, policy_meta, document.document_name)
     kb = build_policy_kb(document.as_dict(), policy_meta, content, settings)
     path = settings.policy_kbs_dir / f"{policy_id}.kb.yaml"
+    # Never silently overwrite verified/enriched/approved human work on a re-extract.
+    archive_if_protected(path)
     saved = save_policy_kb(path, kb, settings)
     return kb, saved

@@ -54,8 +54,10 @@ Run **Part D** of the app on two or more **approved** KBs.
    ```
    To fold: set `decision: fold` and `fold_into:` to the `rule_id` of the member you want to keep. The
    other members are merged into it (their source ids, citations, and applicability are preserved). To
-   keep them separate, leave `decision: keep_separate`. If you want to simplify the surviving rule's
-   wording, edit it in its `policy_kbs/<slug>.kb.yaml` before consolidating.
+   keep them separate, leave `decision: keep_separate`. The worksheet snapshots the rules as they were
+   when you clicked **Find merge candidates**, so to change a rule's wording either edit its
+   `policy_kbs/<slug>.kb.yaml` *before* finding candidates (or re-run **Find merge candidates** after
+   editing to refresh the snapshot), or refine the surviving rule in the final KB after consolidation.
 3. Click **4c — Apply folds & consolidate**. Your fold decisions are applied deterministically, the LLM
    groups the remaining rules by cross-policy relationship (coincides / conflicts / refines / overlaps /
    complements), and the final KB is written (the previous one is archived).

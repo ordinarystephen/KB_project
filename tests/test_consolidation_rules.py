@@ -182,3 +182,32 @@ def test_similarity_flags_only_near_duplicates(settings) -> None:
     candidates = find_candidates(rules, SimulatedLLMClient(), settings)
     assert len(candidates) == 1
     assert len(candidates[0]["members"]) == 2
+
+
+def test_duplicate_rules_with_differing_severity_flagged_as_conflict(settings) -> None:
+    a = _rule("a-1", policy_id="a")
+    a["severity"] = "soft_warning"
+    b = _rule("b-1", policy_id="b")
+    b["severity"] = "hard_stop"
+    rules = prepare_rules([{"rules": [a]}, {"rules": [b]}])
+    assert len(rules) == 1
+    assert rules[0]["severity"] == "hard_stop"  # stricter wins, not silently dropped
+    assert any(
+        "severity conflict" in flag.lower() for flag in rules[0]["ambiguities_or_review_flags"]
+    )
+    final = assemble_final_kb(rules, [], created_from_documents=["a.txt"], provenance=_provenance())
+    validate_json(final, settings.schemas_dir / "credit_policy_rules_kb.schema.json")
+    assert final["rules"][0]["implementation_readiness"] == "needs_policy_owner_review"
+
+
+def test_rule_without_doc_fields_survives_consolidation_and_is_flagged(settings) -> None:
+    # A rule with no documentation fields must be kept-and-flagged, not blow up the whole KB.
+    rules = prepare_rules([{"rules": [_rule("a-1", policy_id="a", fields=())]}])
+    final = assemble_final_kb(rules, [], created_from_documents=["a.txt"], provenance=_provenance())
+    validate_json(final, settings.schemas_dir / "credit_policy_rules_kb.schema.json")
+    assert len(final["rules"]) == 1
+    assert final["rules"][0]["credit_documentation_fields_needed"] == []
+    assert any(
+        "document fields" in flag.lower()
+        for flag in final["rules"][0]["ambiguities_or_review_flags"]
+    )

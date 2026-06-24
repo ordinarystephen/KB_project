@@ -24,3 +24,13 @@ def test_azure_configuration_is_read_from_runtime_environment(monkeypatch) -> No
     assert settings.document_intelligence_endpoint == (
         "https://example.cognitiveservices.azure.com/"
     )
+
+
+def test_similarity_threshold_reads_from_environment(monkeypatch) -> None:
+    monkeypatch.setenv("KB_SIMILARITY_THRESHOLD", "0.5")
+    assert Settings().similarity_threshold == 0.5
+
+
+def test_invalid_similarity_threshold_falls_back_to_default(monkeypatch) -> None:
+    monkeypatch.setenv("KB_SIMILARITY_THRESHOLD", "not-a-number")
+    assert Settings().similarity_threshold == 0.86

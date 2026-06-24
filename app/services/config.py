@@ -9,6 +9,17 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _read_float(name: str, default: float) -> float:
+    """Read a float env var, falling back to the default on missing/invalid input.
+
+    A misconfigured Domino variable must not crash the app at import time.
+    """
+    try:
+        return float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     """Deployment settings with portable, repository-relative defaults."""
@@ -31,7 +42,7 @@ class Settings:
         default_factory=lambda: os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "")
     )
     similarity_threshold: float = field(
-        default_factory=lambda: float(os.getenv("KB_SIMILARITY_THRESHOLD", "0.86"))
+        default_factory=lambda: _read_float("KB_SIMILARITY_THRESHOLD", 0.86)
     )
 
     @property

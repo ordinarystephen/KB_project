@@ -31,6 +31,8 @@ def verify_policy_kb(
             "reviewed_policy_kb": relative_to_project(policy_kb_path, settings),
         },
     )
+    # The path is an authoritative fact, not the model's to decide: override any value it returned.
+    result["reviewed_policy_kb"] = relative_to_project(policy_kb_path, settings)
     validate_or_log(
         result,
         settings.schemas_dir / "policy_verification.schema.json",

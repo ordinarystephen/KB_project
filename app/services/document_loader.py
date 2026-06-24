@@ -120,7 +120,9 @@ def extract_document(
         text = _read_local(path)
     if not text.strip():
         raise ValueError(f"No readable text extracted from {path.name}")
-    text_path = settings.extracted_text_dir / f"{stable_stem(path.name)}.txt"
+    # Include the content hash so uploads that slug to the same stem (e.g. Report.txt and Report.md)
+    # never overwrite each other's extracted text.
+    text_path = settings.extracted_text_dir / f"{stable_stem(path.name)}.{content_hash[:12]}.txt"
     text_path.parent.mkdir(parents=True, exist_ok=True)
     text_path.write_text(text, encoding="utf-8")
     record = DocumentRecord(

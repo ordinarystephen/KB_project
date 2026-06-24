@@ -55,6 +55,9 @@ def start_consolidation(
         "similarity_threshold": settings.similarity_threshold,
         "source_policy_kbs": [relative_to_project(path, settings) for path in policy_kb_paths],
         "candidates": candidates,
+        # Snapshot of the exact normalized rules the candidates reference. 4c folds against this,
+        # so editing a source KB between 4b and 4c cannot silently change ids and drop a fold.
+        "prepared_rules": rules,
     }
     path = settings.merge_candidates_dir / f"{worksheet['run_id']}.candidates.yaml"
     save_yaml(path, worksheet)
@@ -84,7 +87,8 @@ def finish_consolidation(
     paths = [settings.project_root / rel for rel in worksheet["source_policy_kbs"]]
     kbs = _load_approved(paths, settings)
 
-    rules = prepare_rules(kbs)
+    # Fold against the snapshot the human reviewed; re-derive only if an older worksheet lacks it.
+    rules = worksheet.get("prepared_rules") or prepare_rules(kbs)
     rules = apply_folds(rules, fold_ops_from_candidates(worksheet.get("candidates", [])))
     grouped = client.generate("group", {"rules": rules})
 

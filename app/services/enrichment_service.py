@@ -8,7 +8,12 @@ from typing import Any
 from .config import Settings
 from .json_utils import load_json
 from .llm_client import LLMClient
-from .policy_kb_store import load_policy_kb, record_stage, save_policy_kb
+from .policy_kb_store import (
+    apply_policy_identity,
+    load_policy_kb,
+    record_stage,
+    save_policy_kb,
+)
 
 
 def enrich_policy_kb(
@@ -35,10 +40,22 @@ def enrich_policy_kb(
             "verification": verification,
         },
     )
-    for rule in content.get("rules", []):
-        rule.setdefault("human_review_status", "pending_review")
-        rule.setdefault("implementation_readiness", "needs_human_review")
-    kb["rules"] = content.get("rules", kb["rules"])
+    new_rules = content.get("rules")
+    if new_rules:  # never let an empty/absent enrichment response wipe existing rules
+        for rule in new_rules:
+            rule.setdefault("human_review_status", "pending_review")
+            rule.setdefault("implementation_readiness", "needs_human_review")
+        policy = kb["policy"]
+        apply_policy_identity(
+            new_rules,
+            {
+                "policy_id": policy["policy_id"],
+                "policy_name": policy["policy_name"],
+                "policy_version": policy["policy_version"],
+            },
+            policy["document_name"],
+        )
+        kb["rules"] = new_rules
     kb["follow_up_items"] = content.get("follow_up_items", kb["follow_up_items"])
     record_stage(
         kb, settings, stage="enrich", status="enriched", prompt_name="policy_kb_enrichment.md"

@@ -1,9 +1,11 @@
 """Unit tests for the YAML, prompt-rendering, and status helpers."""
 
+import re
 from pathlib import Path
 
 import pytest
 
+from app.services.llm_client import _safe_schema_title
 from app.services.prompt_utils import render_prompt
 from app.services.status import is_approved, next_status, stage_hint
 from app.services.yaml_utils import load_yaml, save_yaml
@@ -38,6 +40,14 @@ def test_yaml_round_trip(tmp_path: Path) -> None:
     payload = {"a": [1, 2], "b": {"c": "d"}, "page": None}
     path = save_yaml(tmp_path / "nested" / "doc.yaml", payload)
     assert load_yaml(path) == payload
+
+
+def test_safe_schema_title_is_openai_name_compatible() -> None:
+    assert (
+        _safe_schema_title("Policy Completeness Verification") == "Policy_Completeness_Verification"
+    )
+    assert re.fullmatch(r"[a-zA-Z0-9_-]+", _safe_schema_title("a b / c!"))
+    assert _safe_schema_title("") == "schema"
 
 
 def test_status_state_machine() -> None:

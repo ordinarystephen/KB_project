@@ -280,6 +280,16 @@ def _deduplicate(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _merge_rules(target: dict[str, Any], other: dict[str, Any]) -> None:
     target["source_rule_ids"] = sorted(set(target["source_rule_ids"] + other["source_rule_ids"]))
     target["policy_source"] = _merge_sources(target["policy_source"], other["policy_source"])
+    if target["severity"] != other["severity"]:
+        # Same obligation, different severity is a genuine policy conflict: keep the stricter
+        # severity and flag it (which routes the rule to policy-owner review) rather than silently
+        # dropping one.
+        stricter = _stricter_severity(target["severity"], other["severity"])
+        target["ambiguities_or_review_flags"] = target["ambiguities_or_review_flags"] + [
+            f"Possible severity conflict: merged duplicate rules had differing severity "
+            f"('{target['severity']}' vs '{other['severity']}'); kept the stricter '{stricter}'."
+        ]
+        target["severity"] = stricter
     for key in (
         "credit_documentation_fields_needed",
         "evidence_required",
@@ -395,6 +405,19 @@ def _more_cautious_readiness(first: str, second: str) -> str:
         "needs_policy_owner_review": 4,
     }
     return max((first, second), key=lambda value: rank[value])
+
+
+def _stricter_severity(first: str, second: str) -> str:
+    rank = {
+        "definition_only": 0,
+        "guidance": 1,
+        "soft_warning": 2,
+        "documentation_gap": 3,
+        "approval_gap": 4,
+        "exception_required": 5,
+        "hard_stop": 6,
+    }
+    return max((first, second), key=lambda value: rank.get(value, -1))
 
 
 def _unique(items: list[Any]) -> list[Any]:

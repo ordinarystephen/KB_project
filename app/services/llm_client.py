@@ -12,10 +12,21 @@ fold application, and schema validation.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from typing import Any
 
 from .config import Settings
+
+
+def _safe_schema_title(title: str) -> str:
+    """OpenAI's json_schema response-format name must match ^[a-zA-Z0-9_-]+$.
+
+    Schema ``title`` values may contain spaces (e.g. "Policy Completeness Verification"); sanitize
+    them so the Azure Structured Outputs request is accepted.
+    """
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(title)).strip("_")
+    return cleaned or "schema"
 
 
 class LLMClient(ABC):
@@ -285,6 +296,7 @@ _PROMPT_NAMES = {
 }
 
 _EXTRACT_ENRICH_SCHEMA = {
+    "title": "policy_kb_content",
     "type": "object",
     "additionalProperties": False,
     "required": ["rules", "follow_up_items"],
@@ -294,6 +306,7 @@ _EXTRACT_ENRICH_SCHEMA = {
     },
 }
 _GROUP_SCHEMA = {
+    "title": "rule_groups",
     "type": "object",
     "additionalProperties": False,
     "required": ["rule_groups"],
@@ -368,9 +381,12 @@ class AzureOpenAILLMClient(LLMClient):
         )
         # Structured Outputs (json_schema) is preferred over the deprecated json_object mode for
         # gpt-4o; strict=False keeps full JSON-Schema constraints usable (authoritative validation
-        # still runs deterministically in the services).
+        # still runs deterministically in the services). The response-format name is derived from
+        # the schema title, which must be sanitized to OpenAI's allowed character set.
+        schema = self._output_schema(operation)
+        schema = {**schema, "title": _safe_schema_title(schema.get("title", operation))}
         structured = self._create_llm().with_structured_output(
-            self._output_schema(operation), method="json_schema", strict=False
+            schema, method="json_schema", strict=False
         )
         result = structured.invoke([("system", system), ("user", user)])
         if not isinstance(result, dict):
