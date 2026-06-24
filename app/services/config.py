@@ -1,6 +1,6 @@
 """Environment-based application configuration."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
@@ -13,14 +13,24 @@ class Settings:
     """Deployment settings with portable, repository-relative defaults."""
 
     project_root: Path = PROJECT_ROOT
-    llm_mode: str = os.getenv("KB_LLM_MODE", "simulated").lower()
-    azure_openai_endpoint: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    azure_openai_deployment: str = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
-    azure_openai_api_version: str = os.getenv(
-        "OPENAI_API_VERSION", "2025-04-01-preview"
+    llm_mode: str = field(
+        default_factory=lambda: os.getenv("KB_LLM_MODE", "azure").lower()
     )
-    document_intelligence_endpoint: str = os.getenv(
-        "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", ""
+    azure_openai_endpoint: str = field(
+        default_factory=lambda: os.getenv("AZURE_OPENAI_ENDPOINT", "")
+    )
+    azure_openai_deployment: str = field(
+        default_factory=lambda: os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+    )
+    azure_openai_api_version: str = field(
+        default_factory=lambda: os.getenv(
+            "OPENAI_API_VERSION", "2025-04-01-preview"
+        )
+    )
+    document_intelligence_endpoint: str = field(
+        default_factory=lambda: os.getenv(
+            "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", ""
+        )
     )
 
     @property

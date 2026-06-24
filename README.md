@@ -35,7 +35,7 @@ Python 3.11 or newer and `uv` are required by the project standard.
 
 ```bash
 uv sync --dev
-KB_LLM_MODE=simulated uv run streamlit run app/streamlit_app.py
+uv run streamlit run app/streamlit_app.py
 ```
 
 For a pip-managed environment such as an existing Domino `.venv`:
@@ -43,11 +43,11 @@ For a pip-managed environment such as an existing Domino `.venv`:
 ```bash
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-KB_LLM_MODE=simulated streamlit run app/streamlit_app.py
+streamlit run app/streamlit_app.py
 ```
 
-Simulated mode is the default. It uses deterministic fake outputs and needs no credentials, network,
-Azure service, or real policy document.
+Azure mode is the deployed default. Simulated mode is reserved for automated offline tests and must
+be explicitly enabled with `KB_LLM_MODE=simulated`.
 
 ## Offline validation
 
@@ -94,6 +94,11 @@ policy summaries, and non-checkable definition/retrieval content.
 No API keys are supported. Azure OpenAI and Document Intelligence both use one cached
 `DefaultAzureCredential` chain, allowing Domino's configured environment, CLI, or managed identity
 to authenticate.
+
+In Domino, the credential chain automatically consumes the identity made available by the runtime,
+including managed/workload identity or standard AAD environment credentials such as
+`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_CLIENT_SECRET`. Do not place credentials in this
+repository or Streamlit code.
 
 Set these variables in the target environment:
 
