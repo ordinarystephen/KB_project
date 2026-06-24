@@ -38,6 +38,14 @@ uv sync --dev
 KB_LLM_MODE=simulated uv run streamlit run app/streamlit_app.py
 ```
 
+For a pip-managed environment such as an existing Domino `.venv`:
+
+```bash
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+KB_LLM_MODE=simulated streamlit run app/streamlit_app.py
+```
+
 Simulated mode is the default. It uses deterministic fake outputs and needs no credentials, network,
 Azure service, or real policy document.
 
