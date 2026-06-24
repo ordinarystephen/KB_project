@@ -1,0 +1,5 @@
+Fake Lending Policy Beta
+
+This generic test policy requires every sample credit memo to state the requested amount and
+borrower name. A missing field is a documentation gap. This text is invented and is not bank
+policy language.

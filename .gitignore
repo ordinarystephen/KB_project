@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+.DS_Store
+.env
+
+# Runtime documents and generated artifacts may contain workplace information.
+data/source_documents/*
+data/extracted_text/*
+data/document_manifest.json
+knowledge_base/policy_extracts/*
+knowledge_base/reviews/*
+knowledge_base/consolidated/*
+knowledge_base/logs/*
+!data/source_documents/.gitkeep
+!data/extracted_text/.gitkeep
+!knowledge_base/policy_extracts/.gitkeep
+!knowledge_base/reviews/.gitkeep
+!knowledge_base/consolidated/.gitkeep
+!knowledge_base/logs/.gitkeep

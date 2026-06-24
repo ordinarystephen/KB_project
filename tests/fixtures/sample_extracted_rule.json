@@ -1,0 +1,15 @@
+{
+  "rule_id": "doc-sample-rule-001",
+  "rule_name": "Sample documentation requirement",
+  "rule_type": "documentation_requirement",
+  "policy_source": {
+    "policy_name": "Fake Policy",
+    "policy_version": "v1",
+    "document_name": "fake_policy.txt",
+    "section": "Sample",
+    "page": null,
+    "quote": "A fictional field must be present."
+  },
+  "human_review_status": "pending_review",
+  "implementation_readiness": "needs_human_review"
+}

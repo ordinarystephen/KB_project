@@ -1,0 +1,15 @@
+{
+  "required_top_level_keys": [
+    "schema_version",
+    "knowledge_base_name",
+    "created_from_documents",
+    "rules",
+    "processing_summary"
+  ],
+  "forbidden_top_level_keys": [
+    "logs",
+    "review_history",
+    "policy_summary",
+    "ui_state"
+  ]
+}

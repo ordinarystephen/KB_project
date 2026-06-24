@@ -1,0 +1,36 @@
+[project]
+name = "credit-policy-knowledge-base"
+version = "0.1.0"
+description = "Portable Streamlit workbench for creating a credit policy rules knowledge base."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "azure-ai-documentintelligence>=1.0.2",
+  "azure-identity>=1.19.0",
+  "jsonschema>=4.23.0",
+  "langchain-openai>=0.3.0",
+  "pypdf>=5.0.0",
+  "python-docx>=1.1.2",
+  "streamlit>=1.40.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-cov>=6.0.0",
+  "ruff>=0.9.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "PL", "T201", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004"]

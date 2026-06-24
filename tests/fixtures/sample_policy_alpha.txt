@@ -1,0 +1,5 @@
+Fake Lending Policy Alpha
+
+This fictional policy exists only for software testing. Applications above 100,000 sample units
+must include a current borrower financial statement. If the statement is absent, the check fails.
+An exception may pass only when a fictional Senior Reviewer approval record is attached.

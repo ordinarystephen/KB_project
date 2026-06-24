@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Extracted Policy Rules",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "extraction_run_id", "document", "policy_metadata", "rules", "definitions", "unresolved_questions_for_policy_owner", "sections_not_extracted", "quality_control_summary", "processing_summary"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "extraction_run_id": {"type": "string", "minLength": 1},
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_id", "document_name", "source_file_path", "document_type", "content_hash", "upload_timestamp", "extracted_text_path"],
+      "properties": {
+        "document_id": {"type": "string", "minLength": 1},
+        "document_name": {"type": "string", "minLength": 1},
+        "source_file_path": {"type": "string", "minLength": 1},
+        "document_type": {"type": "string", "minLength": 1},
+        "content_hash": {"type": "string", "minLength": 1},
+        "upload_timestamp": {"type": "string", "minLength": 1},
+        "extracted_text_path": {"type": "string", "minLength": 1}
+      }
+    },
+    "policy_metadata": {"type": "object"},
+    "rules": {"type": "array", "items": {"$ref": "#/$defs/extractedRule"}},
+    "definitions": {"type": "array"},
+    "unresolved_questions_for_policy_owner": {"type": "array"},
+    "sections_not_extracted": {"type": "array"},
+    "quality_control_summary": {"type": "object"},
+    "processing_summary": {"$ref": "#/$defs/processingSummary"}
+  },
+  "$defs": {
+    "processingSummary": {
+      "type": "object",
+      "required": ["main_takeaways", "important_rules_identified", "key_thresholds_or_limits", "approval_requirements", "documentation_requirements", "major_ambiguities", "recommended_next_steps"]
+    },
+    "extractedRule": {
+      "type": "object",
+      "required": ["rule_id", "rule_name", "rule_type", "policy_source", "applies_to", "requirement", "normalized_requirement", "check_objective", "credit_documentation_fields_needed", "condition_logic", "evidence_required", "approval_required", "approver_roles", "exceptions", "pass_condition", "fail_condition", "exception_condition", "severity", "expected_output", "source_references", "implementation_notes", "test_cases", "ambiguities_or_review_flags", "human_review_status", "implementation_readiness"],
+      "properties": {
+        "rule_id": {"type": "string", "minLength": 1},
+        "rule_name": {"type": "string", "minLength": 1},
+        "rule_type": {"$ref": "#/$defs/ruleType"},
+        "policy_source": {"type": "object"},
+        "applies_to": {"type": "object"},
+        "requirement": {"type": "string", "minLength": 1},
+        "normalized_requirement": {"type": "string"},
+        "check_objective": {"type": "string", "minLength": 1},
+        "credit_documentation_fields_needed": {"type": "array"},
+        "condition_logic": {"type": "object"},
+        "evidence_required": {"type": "array"},
+        "approval_required": {"type": "boolean"},
+        "approver_roles": {"type": "array"},
+        "exceptions": {"type": "array"},
+        "pass_condition": {"type": "string"},
+        "fail_condition": {"type": "string"},
+        "exception_condition": {"type": "string"},
+        "severity": {"$ref": "#/$defs/severity"},
+        "expected_output": {"type": "object"},
+        "source_references": {"type": "array"},
+        "implementation_notes": {"type": "array"},
+        "test_cases": {"type": "array"},
+        "ambiguities_or_review_flags": {"type": "array"},
+        "human_review_status": {"const": "pending_review"},
+        "implementation_readiness": {"$ref": "#/$defs/readiness"}
+      }
+    },
+    "ruleType": {"enum": ["threshold", "documentation_requirement", "approval_requirement", "exception_requirement", "eligibility", "prohibition", "calculation", "timing_requirement", "monitoring_requirement", "covenant_requirement", "collateral_requirement", "risk_rating_requirement", "borrower_requirement", "guarantor_requirement", "qualitative_review", "definition_only", "retrieval_only"]},
+    "severity": {"enum": ["hard_stop", "exception_required", "documentation_gap", "approval_gap", "soft_warning", "guidance", "definition_only"]},
+    "readiness": {"enum": ["ready_for_build", "needs_human_review", "needs_policy_owner_review", "not_implementable_as_code", "retrieval_only"]}
+  }
+}
