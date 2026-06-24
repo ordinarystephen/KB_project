@@ -1,99 +1,166 @@
-"""Swappable deterministic and Azure OpenAI structured-output clients."""
+"""Swappable deterministic and Azure OpenAI structured-output clients.
+
+Operations:
+- ``extract``  (Part 1): policy text -> draft rules + follow-up items
+- ``verify``   (Part 2): re-read source vs draft -> completeness findings
+- ``enrich``   (Part 3): gap-fill the draft using the verification findings
+- ``group``    (Part 4c): cross-policy relationship grouping over stable rule ids
+
+The LLM returns only the content it generates; deterministic services own provenance, ids, dedup,
+fold application, and schema validation.
+"""
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
-import json
-from pathlib import Path
 from typing import Any
 
 from .config import Settings
 
 
 class LLMClient(ABC):
-    """Small provider-neutral interface for the three workflow operations."""
+    """Provider-neutral interface for the workflow operations and embeddings."""
 
     @abstractmethod
     def generate(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Return a structured response for a named workflow operation."""
 
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Return embedding vectors. Only the Azure client implements this."""
+        raise NotImplementedError("Embeddings are not available for this client")
 
-def _policy_source(payload: dict[str, Any], quote: str) -> dict[str, Any]:
-    metadata = payload.get("policy_metadata", {})
-    document = payload["document"]
+
+# --------------------------------------------------------------------------------------
+# Simulated (offline) client
+# --------------------------------------------------------------------------------------
+
+
+def _sim_policy_source(
+    meta: dict[str, Any], document: dict[str, Any], *, section: str, page: int, quote: str
+) -> dict[str, Any]:
     return {
-        "policy_name": metadata.get("policy_name") or Path(document["document_name"]).stem,
-        "policy_version": metadata.get("policy_version", "simulated-v1"),
+        "policy_id": meta["policy_id"],
+        "policy_name": meta["policy_name"],
+        "policy_version": meta.get("policy_version") or "simulated-v1",
         "document_name": document["document_name"],
-        "section": "Simulated requirements",
-        "page": None,
+        "section": section,
+        "page": page,
         "quote": quote,
     }
 
 
-def _base_rule(payload: dict[str, Any], index: int) -> dict[str, Any]:
-    document = payload["document"]
-    doc_id = document["document_id"]
-    is_alpha = "100,000" in payload["document_text"]
-    if is_alpha:
-        name = "Financial statement required above sample threshold"
-        rule_type = "threshold"
-        requirement = "Applications above 100,000 sample units require a financial statement."
-        fields = ["requested_amount", "borrower_financial_statement", "exception_approval"]
-        quote = (
-            "Applications above 100,000 sample units must include a current borrower "
-            "financial statement."
-        )
-        severity = "documentation_gap"
-        exception_condition = (
-            "Pass with exception when Senior Reviewer approval evidence is attached."
-        )
-    else:
-        name = "Credit memo must identify borrower and amount"
-        rule_type = "documentation_requirement"
-        requirement = "The credit memo must state the borrower name and requested amount."
-        fields = ["borrower_name", "requested_amount"]
-        quote = "every sample credit memo [must] state the requested amount and borrower name"
-        severity = "documentation_gap"
-        exception_condition = ""
+def _sim_applies_to() -> dict[str, list]:
     return {
-        "rule_id": f"{doc_id}-rule-{index:03d}",
-        "rule_name": name,
-        "rule_type": rule_type,
-        "policy_source": _policy_source(payload, quote),
-        "applies_to": {
-            "products": ["sample_credit"],
-            "portfolios": [],
-            "borrower_types": [],
-            "transaction_types": [],
-            "regions": [],
+        "products": ["sample_credit"],
+        "portfolios": [],
+        "borrower_types": [],
+        "transaction_types": [],
+        "regions": [],
+    }
+
+
+def _sim_threshold_rule(meta: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "rule_id": f"{meta['policy_id']}-rule-001",
+        "rule_name": "Financial statement required above sample threshold",
+        "rule_type": "threshold",
+        "policy_source": _sim_policy_source(
+            meta,
+            document,
+            section="2. Thresholds",
+            page=2,
+            quote=(
+                "Applications above 100,000 sample units must include a current borrower "
+                "financial statement."
+            ),
+        ),
+        "applies_to": _sim_applies_to(),
+        "requirement": (
+            "Applications above 100,000 sample units require a current borrower "
+            "financial statement."
+        ),
+        "check_objective": (
+            "Check whether a current financial statement is attached when the requested amount "
+            "exceeds 100,000 sample units."
+        ),
+        "credit_documentation_fields_needed": [
+            "requested_amount",
+            "borrower_financial_statement",
+            "exception_approval",
+        ],
+        "condition_logic": {
+            "logic_type": "all",
+            "conditions": ["requested_amount > 100000", "borrower_financial_statement is present"],
         },
-        "requirement": requirement,
-        "normalized_requirement": requirement,
-        "check_objective": f"Check whether {name.lower()}.",
-        "credit_documentation_fields_needed": fields,
-        "condition_logic": {"logic_type": "all", "conditions": [requirement]},
-        "evidence_required": fields[1:],
-        "approval_required": is_alpha,
-        "approver_roles": ["Senior Reviewer"] if is_alpha else [],
-        "exceptions": [exception_condition] if exception_condition else [],
+        "evidence_required": ["borrower_financial_statement"],
         "pass_condition": (
-            "All required fields and evidence are present and satisfy the requirement."
+            "A current borrower financial statement is attached when requested_amount "
+            "exceeds 100,000."
         ),
         "fail_condition": (
-            "One or more required fields or evidence are missing or do not satisfy the "
-            "requirement."
+            "requested_amount exceeds 100,000 and no current borrower financial statement "
+            "is attached."
         ),
-        "exception_condition": exception_condition,
-        "severity": severity,
+        "exception_condition": (
+            "Pass with exception when Senior Reviewer approval evidence is attached."
+        ),
+        "severity": "documentation_gap",
+        "expected_output": {
+            "pass_message": "Policy check passed.",
+            "fail_message": "Required financial statement is missing.",
+            "exception_message": "Policy check passed with documented exception.",
+        },
+        "test_cases": [
+            {"name": "financial statement present above threshold", "expected": "pass"},
+            {"name": "financial statement missing above threshold", "expected": "fail"},
+        ],
+        "ambiguities_or_review_flags": [],
+        "human_review_status": "pending_review",
+        "implementation_readiness": "needs_human_review",
+    }
+
+
+def _sim_common_rule(
+    meta: dict[str, Any], document: dict[str, Any], *, variant: str
+) -> dict[str, Any]:
+    if variant == "a":
+        requirement = "The credit memo must state the borrower name and requested amount."
+        quote = "every sample credit memo must state the requested amount and borrower name"
+        section = "1. Documentation"
+    else:
+        requirement = (
+            "The credit memo must clearly state the borrower name and the requested amount."
+        )
+        quote = "each credit memo must clearly state the borrower name and the requested amount"
+        section = "A. Memo Contents"
+    return {
+        "rule_id": f"{meta['policy_id']}-rule-002",
+        "rule_name": "Credit memo must identify borrower and amount",
+        "rule_type": "documentation_requirement",
+        "policy_source": _sim_policy_source(meta, document, section=section, page=1, quote=quote),
+        "applies_to": _sim_applies_to(),
+        "requirement": requirement,
+        "check_objective": (
+            "Check whether the credit memo states the borrower name and the requested amount."
+        ),
+        "credit_documentation_fields_needed": ["borrower_name", "requested_amount"],
+        "condition_logic": {
+            "logic_type": "all",
+            "conditions": ["borrower_name is present", "requested_amount is present"],
+        },
+        "evidence_required": ["credit_memo"],
+        "pass_condition": "The credit memo states both the borrower name and the requested amount.",
+        "fail_condition": "The credit memo is missing the borrower name or the requested amount.",
+        "exception_condition": "",
+        "severity": "documentation_gap",
         "expected_output": {
             "pass_message": "Policy check passed.",
             "fail_message": "Required policy evidence is missing or insufficient.",
             "exception_message": "Policy check passed with documented exception.",
         },
-        "source_references": [_policy_source(payload, quote)],
-        "implementation_notes": [],
         "test_cases": [
-            {"name": "required evidence present", "expected": "pass"},
-            {"name": "required evidence absent", "expected": "fail"},
+            {"name": "borrower and amount present", "expected": "pass"},
+            {"name": "borrower or amount absent", "expected": "fail"},
         ],
         "ambiguities_or_review_flags": [],
         "human_review_status": "pending_review",
@@ -107,69 +174,47 @@ class SimulatedLLMClient(LLMClient):
     def generate(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         if operation == "extract":
             return self._extract(payload)
-        if operation == "review":
-            return self._review(payload)
-        if operation == "consolidate":
-            return self._consolidate(payload)
+        if operation == "verify":
+            return self._verify(payload)
+        if operation == "enrich":
+            return self._enrich(payload)
+        if operation == "group":
+            return self._group(payload)
         raise ValueError(f"Unsupported LLM operation: {operation}")
 
     def _extract(self, payload: dict[str, Any]) -> dict[str, Any]:
-        rule = _base_rule(payload, 1)
-        metadata = payload.get("policy_metadata", {})
+        meta = payload["policy_metadata"]
         document = payload["document"]
-        return {
-            "schema_version": "1.0.0",
-            "extraction_run_id": f"extract-{document['content_hash'][:12]}",
-            "document": document,
-            "policy_metadata": {
-                "policy_name": metadata.get("policy_name") or Path(document["document_name"]).stem,
-                "document_name": document["document_name"],
-                "policy_version": metadata.get("policy_version", "simulated-v1"),
-                "effective_date": "",
-                "owner": "",
-                "business_domain": "credit",
-                "extraction_date": "simulated",
-                "extraction_limitations": ["Generated by deterministic simulated mode."],
-            },
-            "rules": [rule],
-            "definitions": [],
-            "unresolved_questions_for_policy_owner": [],
-            "sections_not_extracted": [],
-            "quality_control_summary": {
-                "number_of_rules_extracted": 1,
-                "number_of_rules_with_ambiguity": 0,
-                "number_of_threshold_rules": int(rule["rule_type"] == "threshold"),
-                "number_of_exception_rules": int(bool(rule["exception_condition"])),
-                "overall_completeness_assessment": "Suitable for simulated workflow testing.",
-            },
-            "processing_summary": {
-                "main_takeaways": [rule["rule_name"]],
-                "important_rules_identified": [rule["rule_id"]],
-                "key_thresholds_or_limits": (
-                    ["100,000 sample units"] if rule["rule_type"] == "threshold" else []
-                ),
-                "approval_requirements": rule["approver_roles"],
-                "documentation_requirements": rule["credit_documentation_fields_needed"],
-                "major_ambiguities": [],
-                "recommended_next_steps": ["Complete human policy review."],
-            },
-        }
+        is_alpha = "100,000" in payload["document_text"]
+        rules = []
+        if is_alpha:
+            rules.append(_sim_threshold_rule(meta, document))
+        rules.append(_sim_common_rule(meta, document, variant="a" if is_alpha else "b"))
+        return {"rules": rules, "follow_up_items": []}
 
-    def _review(self, payload: dict[str, Any]) -> dict[str, Any]:
-        extraction = payload["extraction"]
-        weak = [
-            rule["rule_id"]
-            for rule in extraction["rules"]
-            if not rule.get("source_references")
-        ]
-        ready = not weak and bool(extraction["rules"])
+    def _verify(self, payload: dict[str, Any]) -> dict[str, Any]:
+        policy_kb = payload["policy_kb"]
+        rules = policy_kb.get("rules", [])
+        weak = [rule["rule_id"] for rule in rules if not rule["policy_source"].get("quote")]
+        # Simulate one genuine completeness gap so Part 3 has something to fold in.
+        missing_docs = (
+            [
+                {
+                    "description": "Signed credit memo retention period is not captured as a rule.",
+                    "suggested_rule_type": "timing_requirement",
+                }
+            ]
+            if rules
+            else []
+        )
+        ready = not weak and bool(rules)
         return {
             "schema_version": "1.0.0",
-            "reviewed_extraction": payload["extraction_path"],
+            "reviewed_policy_kb": payload["reviewed_policy_kb"],
             "missing_rules": [],
             "missing_thresholds": [],
             "missing_approval_requirements": [],
-            "missing_documentation_requirements": [],
+            "missing_documentation_requirements": missing_docs,
             "weak_source_references": weak,
             "ambiguous_rules": [],
             "rules_needing_split": [],
@@ -180,117 +225,80 @@ class SimulatedLLMClient(LLMClient):
             "ready_for_consolidation": ready,
             "usable_for_credit_documentation_checks": ready,
             "processing_summary": {
-                "main_takeaways": ["Simulated completeness review completed."],
-                "potential_gaps": weak,
+                "main_takeaways": ["Simulated completeness verification completed."],
+                "potential_gaps": [item["description"] for item in missing_docs],
                 "high_priority_reviewer_issues": [],
                 "ready_for_consolidation": ready,
                 "usable_for_credit_documentation_checks": ready,
-                "recommended_next_steps": ["Complete human review before implementation."],
+                "recommended_next_steps": ["Resolve follow-up items before approval."],
             },
         }
 
-    def _consolidate(self, payload: dict[str, Any]) -> dict[str, Any]:
-        extractions = payload["extractions"]
-        rules = []
-        for extraction in extractions:
-            for source_rule in extraction["rules"]:
-                if not _is_checkable(source_rule):
-                    continue
-                flags = " ".join(source_rule.get("ambiguities_or_review_flags", [])).lower()
-                readiness = source_rule.get("implementation_readiness", "needs_human_review")
-                if "conflict" in flags:
-                    readiness = "needs_policy_owner_review"
-                rules.append(_to_final_rule(source_rule, len(rules) + 1, readiness))
-        documents = [extraction["document"]["document_name"] for extraction in extractions]
-        conflicts = [
-            rule["rule_id"]
-            for extraction in extractions
-            for rule in extraction["rules"]
-            if "conflict" in " ".join(rule.get("ambiguities_or_review_flags", [])).lower()
-        ]
+    def _enrich(self, payload: dict[str, Any]) -> dict[str, Any]:
+        policy_kb = payload["policy_kb"]
+        verification = payload["verification"]
+        rules = [dict(rule) for rule in policy_kb.get("rules", [])]
+        follow_ups: list[dict[str, Any]] = list(policy_kb.get("follow_up_items", []))
+        for index, gap in enumerate(verification.get("missing_documentation_requirements", []), 1):
+            follow_ups.append(
+                {
+                    "item_id": f"fu-{index:03d}",
+                    "kind": "missing_documentation_requirement",
+                    "description": gap.get("description", "Unspecified documentation gap."),
+                    "related_rule_id": None,
+                    "status": "open",
+                    "resolution": None,
+                }
+            )
+        return {"rules": rules, "follow_up_items": follow_ups}
+
+    def _group(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rules = payload["rules"]
+        if len(rules) < 2:
+            return {"rule_groups": []}
+        members = [rule["rule_id"] for rule in rules]
         return {
-            "schema_version": "1.0.0",
-            "knowledge_base_name": "credit_policy_rules_kb",
-            "created_from_documents": documents,
-            "rules": rules,
-            "processing_summary": {
-                "total_rules": len(rules),
-                "deterministic_rules": sum(
-                    bool(rule["condition_logic"].get("conditions")) for rule in rules
-                ),
-                "documentation_check_rules": sum(
-                    rule["rule_type"] == "documentation_requirement" for rule in rules
-                ),
-                "approval_check_rules": sum(
-                    rule["rule_type"] == "approval_requirement" for rule in rules
-                ),
-                "exception_rules": sum(bool(rule["exception_condition"]) for rule in rules),
-                "rules_needing_human_review": sum(
-                    rule["implementation_readiness"] == "needs_human_review"
-                    for rule in rules
-                ),
-                "rules_needing_policy_owner_review": sum(
-                    rule["implementation_readiness"] == "needs_policy_owner_review"
-                    for rule in rules
-                ),
-                "rules_ready_for_build": sum(
-                    rule["implementation_readiness"] == "ready_for_build"
-                    for rule in rules
-                ),
-                "main_takeaways": [
-                    f"Consolidated {len(rules)} checkable rules from "
-                    f"{len(documents)} documents."
-                ],
-                "major_conflicts_or_ambiguities": conflicts,
-                "recommended_next_steps": [
-                    "Complete human review before using rules for decisions."
-                ],
-            },
+            "rule_groups": [
+                {
+                    "theme": "Sample credit documentation requirements",
+                    "relationship_type": "complements",
+                    "member_rule_ids": members,
+                    "rationale": (
+                        "Both rules check the same sample credit memo from complementary angles "
+                        "(threshold-driven evidence and baseline memo contents)."
+                    ),
+                    "human_review_status": "pending_review",
+                }
+            ]
         }
 
 
-def _is_checkable(rule: dict[str, Any]) -> bool:
-    return bool(
-        rule.get("credit_documentation_fields_needed")
-        and rule.get("pass_condition")
-        and rule.get("fail_condition")
-        and rule.get("policy_source")
-        and rule.get("rule_type") not in {"definition_only", "retrieval_only"}
-    )
+# --------------------------------------------------------------------------------------
+# Azure OpenAI client
+# --------------------------------------------------------------------------------------
 
+_PROMPT_NAMES = {
+    "extract": "policy_rule_extraction.md",
+    "verify": "policy_completeness_review.md",
+    "enrich": "policy_kb_enrichment.md",
+    "group": "policy_kb_consolidation.md",
+}
 
-def _to_final_rule(
-    source: dict[str, Any], index: int, readiness: str
-) -> dict[str, Any]:
-    policy_source = source["policy_source"]
-    return {
-        "rule_id": f"cpr-{index:04d}",
-        "source_rule_ids": [source["rule_id"]],
-        "rule_name": source["rule_name"],
-        "rule_type": source["rule_type"],
-        "policy_source": {
-            "policy_name": policy_source.get("policy_name", ""),
-            "policy_version": policy_source.get("policy_version", ""),
-            "document_name": policy_source.get("document_name", ""),
-            "section": policy_source.get("section", ""),
-            "page": policy_source.get("page"),
-            "quote": policy_source.get("quote", ""),
-        },
-        "applies_to": source["applies_to"],
-        "requirement": source["requirement"],
-        "check_objective": source["check_objective"],
-        "credit_documentation_fields_needed": source["credit_documentation_fields_needed"],
-        "condition_logic": source["condition_logic"],
-        "evidence_required": source["evidence_required"],
-        "pass_condition": source["pass_condition"],
-        "fail_condition": source["fail_condition"],
-        "exception_condition": source["exception_condition"],
-        "severity": source["severity"],
-        "expected_output": source["expected_output"],
-        "test_cases": source["test_cases"],
-        "human_review_status": source.get("human_review_status", "pending_review"),
-        "implementation_readiness": readiness,
-    }
+_EXTRACT_ENRICH_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["rules", "follow_up_items"],
+    "properties": {
+        "rules": {"type": "array"},
+        "follow_up_items": {"type": "array"},
+    },
+}
+_GROUP_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["rule_groups"],
+    "properties": {"rule_groups": {"type": "array"}},
+}
 
 
 class AzureOpenAILLMClient(LLMClient):
@@ -313,38 +321,76 @@ class AzureOpenAILLMClient(LLMClient):
             azure_ad_token_provider=get_cognitive_services_token_provider(),
             api_version=self.settings.azure_openai_api_version,
             temperature=0,
-            model_kwargs={"response_format": {"type": "json_object"}},
         )
 
+    def _context(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if operation == "extract":
+            document = payload["document"]
+            return {
+                "document_metadata": {
+                    **payload["policy_metadata"],
+                    "document_name": document["document_name"],
+                },
+                "document_text": payload["document_text"],
+            }
+        if operation == "verify":
+            return {"document_text": payload["document_text"], "policy_kb": payload["policy_kb"]}
+        if operation == "enrich":
+            return {
+                "document_text": payload["document_text"],
+                "policy_kb": payload["policy_kb"],
+                "verification": payload["verification"],
+            }
+        if operation == "group":
+            return {"rules": payload["rules"]}
+        raise ValueError(f"Unsupported LLM operation: {operation}")
+
+    def _output_schema(self, operation: str) -> dict[str, Any]:
+        if operation in {"extract", "enrich"}:
+            return _EXTRACT_ENRICH_SCHEMA
+        if operation == "group":
+            return _GROUP_SCHEMA
+        if operation == "verify":
+            from .json_utils import load_json
+
+            return load_json(self.settings.schemas_dir / "policy_verification.schema.json")
+        raise ValueError(f"Unsupported LLM operation: {operation}")
+
     def generate(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
-        prompt_names = {
-            "extract": "policy_rule_extraction.md",
-            "review": "policy_completeness_review.md",
-            "consolidate": "policy_kb_consolidation.md",
-        }
-        schema_names = {
-            "extract": "extracted_policy_rules.schema.json",
-            "review": "policy_review.schema.json",
-            "consolidate": "credit_policy_rules_kb.schema.json",
-        }
+        from .prompt_utils import render_prompt
+
         try:
-            prompt_path = self.settings.prompts_dir / prompt_names[operation]
-            schema_path = self.settings.schemas_dir / schema_names[operation]
+            prompt_path = self.settings.prompts_dir / _PROMPT_NAMES[operation]
         except KeyError as exc:
             raise ValueError(f"Unsupported LLM operation: {operation}") from exc
-        system_prompt = prompt_path.read_text(encoding="utf-8")
-        system_prompt += "\n\nRequired JSON Schema:\n"
-        system_prompt += schema_path.read_text(encoding="utf-8")
-        response = self._create_llm().invoke(
-            [
-                ("system", system_prompt),
-                ("user", json.dumps(payload, ensure_ascii=False)),
-            ]
+        system, user = render_prompt(
+            prompt_path.read_text(encoding="utf-8"), self._context(operation, payload)
         )
-        result = json.loads(response.content)
+        # Structured Outputs (json_schema) is preferred over the deprecated json_object mode for
+        # gpt-4o; strict=False keeps full JSON-Schema constraints usable (authoritative validation
+        # still runs deterministically in the services).
+        structured = self._create_llm().with_structured_output(
+            self._output_schema(operation), method="json_schema", strict=False
+        )
+        result = structured.invoke([("system", system), ("user", user)])
         if not isinstance(result, dict):
-            raise ValueError("Azure OpenAI returned a non-object JSON response")
+            raise ValueError("Azure OpenAI returned a non-object structured response")
         return result
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not self.settings.azure_openai_embedding_deployment:
+            raise ValueError("AZURE_OPENAI_EMBEDDING_DEPLOYMENT is required for embeddings")
+        from langchain_openai import AzureOpenAIEmbeddings
+
+        from .azure_auth import get_cognitive_services_token_provider
+
+        embeddings = AzureOpenAIEmbeddings(
+            azure_endpoint=self.settings.azure_openai_endpoint,
+            azure_deployment=self.settings.azure_openai_embedding_deployment,
+            azure_ad_token_provider=get_cognitive_services_token_provider(),
+            api_version=self.settings.azure_openai_api_version,
+        )
+        return embeddings.embed_documents(texts)
 
 
 def create_llm_client(settings: Settings) -> LLMClient:

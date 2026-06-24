@@ -11,6 +11,7 @@ dependencies = [
   "langchain-openai>=0.3.0",
   "pypdf>=5.0.0",
   "python-docx>=1.1.2",
+  "pyyaml>=6.0",
   "streamlit>=1.40.0",
 ]
 
@@ -31,6 +32,14 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "PL", "T201", "UP", "W"]
+# PLC0415: lazy/optional imports (Azure, langchain, jsonschema, pyyaml) are deliberate so the app
+#          imports cleanly offline and pulls optional dependencies only when actually used.
+# PLR2004: the recurring "at least two" (< 2) guards are self-documenting.
+ignore = ["PLC0415", "PLR2004"]
+
+[tool.ruff.lint.pylint]
+max-args = 7
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["PLR2004"]
+# The sys.path shim must run before the app package imports so Streamlit launches from any cwd.
+"app/streamlit_app.py" = ["E402"]

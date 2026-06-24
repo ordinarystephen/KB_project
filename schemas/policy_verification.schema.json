@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Policy Completeness Review",
+  "title": "Policy Completeness Verification",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "reviewed_extraction", "missing_rules", "missing_thresholds", "missing_approval_requirements", "missing_documentation_requirements", "weak_source_references", "ambiguous_rules", "rules_needing_split", "rules_needing_policy_owner_review", "non_checkable_rules", "rules_missing_conditions", "rules_missing_fields", "ready_for_consolidation", "usable_for_credit_documentation_checks", "processing_summary"],
+  "required": ["schema_version", "reviewed_policy_kb", "missing_rules", "missing_thresholds", "missing_approval_requirements", "missing_documentation_requirements", "weak_source_references", "ambiguous_rules", "rules_needing_split", "rules_needing_policy_owner_review", "non_checkable_rules", "rules_missing_conditions", "rules_missing_fields", "ready_for_consolidation", "usable_for_credit_documentation_checks", "processing_summary"],
   "properties": {
     "schema_version": {"const": "1.0.0"},
-    "reviewed_extraction": {"type": "string", "minLength": 1},
+    "reviewed_policy_kb": {"type": "string", "minLength": 1},
     "missing_rules": {"type": "array"},
     "missing_thresholds": {"type": "array"},
     "missing_approval_requirements": {"type": "array"},

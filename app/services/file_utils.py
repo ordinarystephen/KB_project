@@ -1,8 +1,10 @@
 """Safe, stable file naming and repository folder management."""
 
-from pathlib import Path
+from __future__ import annotations
+
 import re
-from typing import Iterable
+from collections.abc import Iterable
+from pathlib import Path
 
 from .config import Settings
 
@@ -23,8 +25,9 @@ def ensure_output_folders(settings: Settings) -> list[Path]:
     folders: Iterable[Path] = (
         settings.source_documents_dir,
         settings.extracted_text_dir,
-        settings.policy_extracts_dir,
-        settings.reviews_dir,
+        settings.policy_kbs_dir,
+        settings.verifications_dir,
+        settings.merge_candidates_dir,
         settings.consolidated_dir,
         settings.logs_dir,
     )

@@ -1,6 +1,6 @@
 """Shared validation, error capture, and overwrite protection."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +16,7 @@ def validate_or_log(
     try:
         validate_json(payload, schema_path)
     except (JsonValidationError, RuntimeError) as exc:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         debug_path = settings.logs_dir / f"{stable_slug(operation)}-{stamp}.invalid.json"
         save_json(debug_path, payload)
         raise JsonValidationError(f"{exc}; invalid output saved to {debug_path}") from exc

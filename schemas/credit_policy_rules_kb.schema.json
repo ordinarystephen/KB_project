@@ -3,18 +3,44 @@
   "title": "Credit Policy Rules Knowledge Base",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "knowledge_base_name", "created_from_documents", "rules", "processing_summary"],
+  "required": ["schema_version", "knowledge_base_name", "created_from_documents", "rules", "rule_groups", "provenance", "processing_summary"],
   "properties": {
     "schema_version": {"const": "1.0.0"},
     "knowledge_base_name": {"const": "credit_policy_rules_kb"},
     "created_from_documents": {"type": "array", "items": {"type": "string"}},
     "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
+    "rule_groups": {"type": "array", "items": {"$ref": "#/$defs/ruleGroup"}},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generated_at", "model_deployment", "prompt_versions", "source_policy_kbs"],
+      "properties": {
+        "generated_at": {"type": "string"},
+        "model_deployment": {"type": "string"},
+        "prompt_versions": {"type": "object"},
+        "source_policy_kbs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["policy_id", "file", "content_hash", "approved_at"],
+            "properties": {
+              "policy_id": {"type": "string"},
+              "file": {"type": "string"},
+              "content_hash": {"type": "string"},
+              "approved_at": {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    },
     "processing_summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["total_rules", "deterministic_rules", "documentation_check_rules", "approval_check_rules", "exception_rules", "rules_needing_human_review", "rules_needing_policy_owner_review", "rules_ready_for_build", "main_takeaways", "major_conflicts_or_ambiguities", "recommended_next_steps"],
+      "required": ["total_rules", "total_rule_groups", "deterministic_rules", "documentation_check_rules", "approval_check_rules", "exception_rules", "rules_needing_human_review", "rules_needing_policy_owner_review", "rules_ready_for_build", "main_takeaways", "major_conflicts_or_ambiguities", "recommended_next_steps"],
       "properties": {
         "total_rules": {"type": "integer", "minimum": 0},
+        "total_rule_groups": {"type": "integer", "minimum": 0},
         "deterministic_rules": {"type": "integer", "minimum": 0},
         "documentation_check_rules": {"type": "integer", "minimum": 0},
         "approval_check_rules": {"type": "integer", "minimum": 0},
@@ -29,13 +55,27 @@
     }
   },
   "$defs": {
+    "ruleGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group_id", "theme", "relationship_type", "member_rule_ids", "rationale", "human_review_status"],
+      "properties": {
+        "group_id": {"type": "string", "minLength": 1},
+        "theme": {"type": "string", "minLength": 1},
+        "relationship_type": {"enum": ["coincides", "conflicts", "refines", "overlaps", "complements"]},
+        "member_rule_ids": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+        "rationale": {"type": "string"},
+        "human_review_status": {"type": "string", "minLength": 1}
+      }
+    },
     "rule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rule_id", "source_rule_ids", "rule_name", "rule_type", "policy_source", "applies_to", "requirement", "check_objective", "credit_documentation_fields_needed", "condition_logic", "evidence_required", "pass_condition", "fail_condition", "exception_condition", "severity", "expected_output", "test_cases", "ambiguities_or_review_flags", "human_review_status", "implementation_readiness"],
+      "required": ["rule_id", "source_rule_ids", "group_ids", "rule_name", "rule_type", "policy_source", "applies_to", "requirement", "check_objective", "credit_documentation_fields_needed", "condition_logic", "evidence_required", "pass_condition", "fail_condition", "exception_condition", "severity", "expected_output", "test_cases", "ambiguities_or_review_flags", "human_review_status", "implementation_readiness"],
       "properties": {
         "rule_id": {"type": "string", "minLength": 1},
         "source_rule_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "group_ids": {"type": "array", "items": {"type": "string"}},
         "rule_name": {"type": "string", "minLength": 1},
         "rule_type": {"enum": ["threshold", "documentation_requirement", "approval_requirement", "exception_requirement", "eligibility", "prohibition", "calculation", "timing_requirement", "monitoring_requirement", "covenant_requirement", "collateral_requirement", "risk_rating_requirement", "borrower_requirement", "guarantor_requirement", "qualitative_review", "definition_only", "retrieval_only"]},
         "policy_source": {"$ref": "#/$defs/policySource"},
@@ -70,8 +110,9 @@
     "sourceReference": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["policy_name", "policy_version", "document_name", "section", "page", "quote"],
+      "required": ["policy_id", "policy_name", "policy_version", "document_name", "section", "page", "quote"],
       "properties": {
+        "policy_id": {"type": "string"},
         "policy_name": {"type": "string"},
         "policy_version": {"type": "string"},
         "document_name": {"type": "string"},
@@ -83,8 +124,9 @@
     "policySource": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["policy_name", "policy_version", "document_name", "section", "page", "quote"],
+      "required": ["policy_id", "policy_name", "policy_version", "document_name", "section", "page", "quote"],
       "properties": {
+        "policy_id": {"type": "string"},
         "policy_name": {"type": "string"},
         "policy_version": {"type": "string"},
         "document_name": {"type": "string"},

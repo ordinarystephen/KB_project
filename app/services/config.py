@@ -1,9 +1,10 @@
 """Environment-based application configuration."""
 
-from dataclasses import dataclass, field
-import os
-from pathlib import Path
+from __future__ import annotations
 
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -13,24 +14,24 @@ class Settings:
     """Deployment settings with portable, repository-relative defaults."""
 
     project_root: Path = PROJECT_ROOT
-    llm_mode: str = field(
-        default_factory=lambda: os.getenv("KB_LLM_MODE", "azure").lower()
-    )
+    llm_mode: str = field(default_factory=lambda: os.getenv("KB_LLM_MODE", "azure").lower())
     azure_openai_endpoint: str = field(
         default_factory=lambda: os.getenv("AZURE_OPENAI_ENDPOINT", "")
     )
     azure_openai_deployment: str = field(
         default_factory=lambda: os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
     )
+    azure_openai_embedding_deployment: str = field(
+        default_factory=lambda: os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "")
+    )
     azure_openai_api_version: str = field(
-        default_factory=lambda: os.getenv(
-            "OPENAI_API_VERSION", "2025-04-01-preview"
-        )
+        default_factory=lambda: os.getenv("OPENAI_API_VERSION", "2025-04-01-preview")
     )
     document_intelligence_endpoint: str = field(
-        default_factory=lambda: os.getenv(
-            "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", ""
-        )
+        default_factory=lambda: os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "")
+    )
+    similarity_threshold: float = field(
+        default_factory=lambda: float(os.getenv("KB_SIMILARITY_THRESHOLD", "0.86"))
     )
 
     @property
@@ -42,12 +43,16 @@ class Settings:
         return self.project_root / "data" / "extracted_text"
 
     @property
-    def policy_extracts_dir(self) -> Path:
-        return self.project_root / "knowledge_base" / "policy_extracts"
+    def policy_kbs_dir(self) -> Path:
+        return self.project_root / "knowledge_base" / "policy_kbs"
 
     @property
-    def reviews_dir(self) -> Path:
-        return self.project_root / "knowledge_base" / "reviews"
+    def verifications_dir(self) -> Path:
+        return self.project_root / "knowledge_base" / "verifications"
+
+    @property
+    def merge_candidates_dir(self) -> Path:
+        return self.project_root / "knowledge_base" / "merge_candidates"
 
     @property
     def consolidated_dir(self) -> Path:

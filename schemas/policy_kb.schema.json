@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Per-Policy Knowledge Base",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "policy", "status", "rules", "follow_up_items", "provenance"],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "status": {"enum": ["draft", "verified", "enriched", "approved"]},
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "policy_name", "policy_version", "document_name", "content_hash", "source_file_path", "extracted_text_path"],
+      "properties": {
+        "policy_id": {"type": "string", "minLength": 1},
+        "policy_name": {"type": "string", "minLength": 1},
+        "policy_version": {"type": "string"},
+        "document_name": {"type": "string", "minLength": 1},
+        "content_hash": {"type": "string", "minLength": 1},
+        "source_file_path": {"type": "string", "minLength": 1},
+        "extracted_text_path": {"type": "string", "minLength": 1}
+      }
+    },
+    "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
+    "follow_up_items": {"type": "array", "items": {"$ref": "#/$defs/followUpItem"}},
+    "provenance": {
+      "type": "object",
+      "required": ["model_deployment", "prompt_versions", "generated_at", "stage_history"],
+      "properties": {
+        "model_deployment": {"type": "string"},
+        "prompt_versions": {"type": "object"},
+        "generated_at": {"type": "string"},
+        "stage_history": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  },
+  "$defs": {
+    "ruleType": {"enum": ["threshold", "documentation_requirement", "approval_requirement", "exception_requirement", "eligibility", "prohibition", "calculation", "timing_requirement", "monitoring_requirement", "covenant_requirement", "collateral_requirement", "risk_rating_requirement", "borrower_requirement", "guarantor_requirement", "qualitative_review", "definition_only", "retrieval_only"]},
+    "severity": {"enum": ["hard_stop", "exception_required", "documentation_gap", "approval_gap", "soft_warning", "guidance", "definition_only"]},
+    "readiness": {"enum": ["ready_for_build", "needs_human_review", "needs_policy_owner_review", "not_implementable_as_code", "retrieval_only"]},
+    "followUpItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "kind", "description", "related_rule_id", "status"],
+      "properties": {
+        "item_id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1},
+        "related_rule_id": {"type": ["string", "null"]},
+        "status": {"enum": ["open", "resolved"]},
+        "resolution": {"type": ["string", "null"]}
+      }
+    },
+    "sourceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "policy_name", "policy_version", "document_name", "section", "page", "quote"],
+      "properties": {
+        "policy_id": {"type": "string"},
+        "policy_name": {"type": "string"},
+        "policy_version": {"type": "string"},
+        "document_name": {"type": "string"},
+        "section": {"type": "string"},
+        "page": {"type": ["integer", "null"]},
+        "quote": {"type": "string"}
+      }
+    },
+    "policySource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "policy_name", "policy_version", "document_name", "section", "page", "quote"],
+      "properties": {
+        "policy_id": {"type": "string"},
+        "policy_name": {"type": "string"},
+        "policy_version": {"type": "string"},
+        "document_name": {"type": "string"},
+        "section": {"type": "string"},
+        "page": {"type": ["integer", "null"]},
+        "quote": {"type": "string"},
+        "additional_sources": {"type": "array", "items": {"$ref": "#/$defs/sourceReference"}}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "rule_name", "rule_type", "policy_source", "applies_to", "requirement", "check_objective", "credit_documentation_fields_needed", "condition_logic", "evidence_required", "pass_condition", "fail_condition", "exception_condition", "severity", "expected_output", "test_cases", "ambiguities_or_review_flags", "human_review_status", "implementation_readiness"],
+      "properties": {
+        "rule_id": {"type": "string", "minLength": 1},
+        "rule_name": {"type": "string", "minLength": 1},
+        "rule_type": {"$ref": "#/$defs/ruleType"},
+        "policy_source": {"$ref": "#/$defs/policySource"},
+        "applies_to": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["products", "portfolios", "borrower_types", "transaction_types", "regions"],
+          "properties": {
+            "products": {"type": "array"},
+            "portfolios": {"type": "array"},
+            "borrower_types": {"type": "array"},
+            "transaction_types": {"type": "array"},
+            "regions": {"type": "array"}
+          }
+        },
+        "requirement": {"type": "string", "minLength": 1},
+        "check_objective": {"type": "string", "minLength": 1},
+        "credit_documentation_fields_needed": {"type": "array"},
+        "condition_logic": {"type": "object", "required": ["logic_type", "conditions"]},
+        "evidence_required": {"type": "array"},
+        "pass_condition": {"type": "string"},
+        "fail_condition": {"type": "string"},
+        "exception_condition": {"type": "string"},
+        "severity": {"$ref": "#/$defs/severity"},
+        "expected_output": {"type": "object", "required": ["pass_message", "fail_message", "exception_message"]},
+        "test_cases": {"type": "array"},
+        "ambiguities_or_review_flags": {"type": "array", "items": {"type": "string"}},
+        "human_review_status": {"type": "string", "minLength": 1},
+        "implementation_readiness": {"$ref": "#/$defs/readiness"}
+      }
+    }
+  }
+}

@@ -1,14 +1,14 @@
 """Document persistence and text extraction, with optional Azure Document Intelligence."""
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from __future__ import annotations
+
 import hashlib
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO
 
 from .config import Settings
 from .file_utils import relative_to_project, stable_stem, versioned_path
-
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 
@@ -38,7 +38,7 @@ class DocumentRecord:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def save_uploaded_document(
@@ -75,13 +75,21 @@ def _read_local(path: Path) -> str:
     raise ValueError(f"Unsupported document type: {suffix}")
 
 
-def _read_with_document_intelligence(path: Path, endpoint: str) -> str:
-    """Extract text using AAD-authenticated Azure Document Intelligence."""
+def _read_with_document_intelligence(content: bytes, endpoint: str) -> str:
+    """Extract structure-preserving Markdown using Azure Document Intelligence.
+
+    Markdown output (``output_content_format=MARKDOWN``) keeps headings, tables, and page anchors
+    (``<!-- PageNumber -->`` / ``<!-- PageBreak -->``) so the LLM can cite the section and page each
+    rule comes from. Microsoft recommends Markdown for LLM/RAG consumption of the layout model.
+    """
     if not endpoint:
         raise ValueError("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT is required")
     try:
         from azure.ai.documentintelligence import DocumentIntelligenceClient
-        from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+        from azure.ai.documentintelligence.models import (
+            AnalyzeDocumentRequest,
+            DocumentContentFormat,
+        )
     except ImportError as exc:  # pragma: no cover - target dependency
         raise RuntimeError("Azure Document Intelligence dependencies are not installed") from exc
 
@@ -89,8 +97,11 @@ def _read_with_document_intelligence(path: Path, endpoint: str) -> str:
 
     credential = get_azure_credential()
     client = DocumentIntelligenceClient(endpoint=endpoint, credential=credential)
-    request = AnalyzeDocumentRequest(bytes_source=path.read_bytes())
-    poller = client.begin_analyze_document("prebuilt-layout", request)
+    poller = client.begin_analyze_document(
+        "prebuilt-layout",
+        AnalyzeDocumentRequest(bytes_source=content),
+        output_content_format=DocumentContentFormat.MARKDOWN,
+    )
     result = poller.result()
     return result.content or ""
 
@@ -104,7 +115,7 @@ def extract_document(
     content = path.read_bytes()
     content_hash = hashlib.sha256(content).hexdigest()
     if use_document_intelligence and path.suffix.lower() not in {".txt", ".md", ".markdown"}:
-        text = _read_with_document_intelligence(path, settings.document_intelligence_endpoint)
+        text = _read_with_document_intelligence(content, settings.document_intelligence_endpoint)
     else:
         text = _read_local(path)
     if not text.strip():

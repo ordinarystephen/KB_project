@@ -13,9 +13,7 @@ def save_json(path: Path, payload: dict[str, Any]) -> Path:
     """Save UTF-8 JSON atomically enough for the local-file workflow."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     temporary.replace(path)
     return path
 

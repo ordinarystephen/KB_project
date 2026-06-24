@@ -1,12 +1,17 @@
-"""Deterministic normalization and safety guardrails for consolidated rules."""
+"""Deterministic mechanics for Part 4: normalize, dedup, stable ids, fold, finalize.
 
-from copy import deepcopy
-from difflib import SequenceMatcher
+This layer owns everything mechanical and trustworthy. The LLM owns semantic judgment only:
+near-duplicate *candidates* come from the similarity service (human-folded), and conflict/grouping
+comes from the LLM ``group`` operation. The brittle name-similarity conflict matcher is gone.
+"""
+
+from __future__ import annotations
+
 import hashlib
 import json
 import re
+from copy import deepcopy
 from typing import Any
-
 
 RULE_TYPES = {
     "threshold",
@@ -43,26 +48,55 @@ READINESS_VALUES = {
     "not_implementable_as_code",
     "retrieval_only",
 }
-APPLICABILITY_FIELDS = (
-    "products",
-    "portfolios",
-    "borrower_types",
-    "transaction_types",
-    "regions",
-)
+APPLICABILITY_FIELDS = ("products", "portfolios", "borrower_types", "transaction_types", "regions")
+RELATIONSHIP_TYPES = {"coincides", "conflicts", "refines", "overlaps", "complements"}
 
 
-def finalize_knowledge_base(result: dict[str, Any]) -> dict[str, Any]:
-    """Normalize, deduplicate, flag conflicts, and recalculate summary counts."""
-    rules = [_normalize_rule(rule) for rule in result.get("rules", [])]
+# ---- public API -----------------------------------------------------------------------
+
+
+def prepare_rules(policy_kbs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize every approved KB's rules, exact-dedup, and assign stable ids."""
+    rules = [_normalize_rule(rule) for kb in policy_kbs for rule in kb.get("rules", [])]
     rules = _deduplicate(rules)
-    _flag_conflicts_and_overlaps(rules)
+    rules.sort(key=lambda rule: rule["rule_id"])
+    return rules
+
+
+def apply_folds(
+    rules: list[dict[str, Any]], fold_ops: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Apply human fold decisions: merge source rules into their target, keep target id."""
+    by_id = {rule["rule_id"]: rule for rule in rules}
+    removed: set[str] = set()
+    for op in fold_ops:
+        target_id = op["target_id"]
+        target = by_id.get(target_id)
+        if target is None:
+            continue
+        for source_id in op.get("source_ids", []):
+            source = by_id.get(source_id)
+            if source is None or source_id == target_id:
+                continue
+            _merge_rules(target, source)
+            removed.add(source_id)
+    return [rule for rule in rules if rule["rule_id"] not in removed]
+
+
+def assemble_final_kb(
+    rules: list[dict[str, Any]],
+    rule_groups_raw: list[dict[str, Any]],
+    *,
+    created_from_documents: list[str],
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach validated groups, enforce readiness, and build the final KB dict."""
+    rules = deepcopy(rules)
+    groups = _attach_groups(rules, rule_groups_raw)
     for rule in rules:
         _enforce_readiness(rule)
     rules.sort(key=lambda rule: rule["rule_id"])
-
-    documents = sorted(set(result.get("created_from_documents", [])))
-    previous_summary = result.get("processing_summary", {})
+    documents = sorted(set(created_from_documents))
     ambiguities = sorted(
         {
             flag
@@ -76,8 +110,11 @@ def finalize_knowledge_base(result: dict[str, Any]) -> dict[str, Any]:
         "knowledge_base_name": "credit_policy_rules_kb",
         "created_from_documents": documents,
         "rules": rules,
+        "rule_groups": groups,
+        "provenance": provenance,
         "processing_summary": {
             "total_rules": len(rules),
+            "total_rule_groups": len(groups),
             "deterministic_rules": sum(
                 bool(rule["condition_logic"].get("conditions")) for rule in rules
             ),
@@ -92,21 +129,37 @@ def finalize_knowledge_base(result: dict[str, Any]) -> dict[str, Any]:
                 rule["implementation_readiness"] == "needs_human_review" for rule in rules
             ),
             "rules_needing_policy_owner_review": sum(
-                rule["implementation_readiness"] == "needs_policy_owner_review"
-                for rule in rules
+                rule["implementation_readiness"] == "needs_policy_owner_review" for rule in rules
             ),
             "rules_ready_for_build": sum(
                 rule["implementation_readiness"] == "ready_for_build" for rule in rules
             ),
-            "main_takeaways": previous_summary.get("main_takeaways")
-            or [
-                f"Consolidated {len(rules)} checkable rules from {len(documents)} documents."
+            "main_takeaways": [
+                f"Consolidated {len(rules)} checkable rules and {len(groups)} relationship "
+                f"groups from {len(documents)} documents."
             ],
             "major_conflicts_or_ambiguities": ambiguities,
-            "recommended_next_steps": previous_summary.get("recommended_next_steps")
-            or ["Complete human review before using the KB for credit checks."],
+            "recommended_next_steps": [
+                "Complete human review before using the KB for credit checks."
+            ],
         },
     }
+
+
+def rule_signature_text(rule: dict[str, Any]) -> str:
+    """Stable natural-language text for a rule, used by the similarity service."""
+    return _normalized_text(
+        " ".join(
+            [
+                rule.get("rule_name", ""),
+                rule.get("requirement", ""),
+                rule.get("check_objective", ""),
+            ]
+        )
+    )
+
+
+# ---- normalization --------------------------------------------------------------------
 
 
 def _normalize_rule(source: dict[str, Any]) -> dict[str, Any]:
@@ -123,16 +176,16 @@ def _normalize_rule(source: dict[str, Any]) -> dict[str, Any]:
     readiness = rule.get("implementation_readiness", "needs_human_review")
     if readiness not in READINESS_VALUES:
         flags.append(
-            f"Unrecognized implementation_readiness '{readiness}' normalized to "
-            "needs_human_review."
+            f"Unrecognized implementation_readiness '{readiness}' normalized to needs_human_review."
         )
         readiness = "needs_human_review"
 
-    source_ids = rule.get("source_rule_ids") or [rule.get("rule_id", "")]
+    source_ids = rule.get("source_rule_ids") or ([rule["rule_id"]] if rule.get("rule_id") else [])
     source_ids = sorted({value for value in source_ids if value})
     normalized = {
         "rule_id": "",
         "source_rule_ids": source_ids,
+        "group_ids": [],
         "rule_name": rule.get("rule_name", "Unnamed rule"),
         "rule_type": rule_type,
         "policy_source": _normalize_policy_source(rule.get("policy_source", {})),
@@ -145,8 +198,7 @@ def _normalize_rule(source: dict[str, Any]) -> dict[str, Any]:
         "credit_documentation_fields_needed": _unique(
             rule.get("credit_documentation_fields_needed", [])
         ),
-        "condition_logic": rule.get("condition_logic")
-        or {"logic_type": "all", "conditions": []},
+        "condition_logic": rule.get("condition_logic") or {"logic_type": "all", "conditions": []},
         "evidence_required": _unique(rule.get("evidence_required", [])),
         "pass_condition": rule.get("pass_condition", ""),
         "fail_condition": rule.get("fail_condition", ""),
@@ -182,6 +234,7 @@ def _normalize_policy_source(source: Any) -> dict[str, Any]:
 
 def _source_fields(source: dict[str, Any]) -> dict[str, Any]:
     return {
+        "policy_id": source.get("policy_id", ""),
         "policy_name": source.get("policy_name", ""),
         "policy_version": source.get("policy_version", ""),
         "document_name": source.get("document_name", ""),
@@ -192,8 +245,7 @@ def _source_fields(source: dict[str, Any]) -> dict[str, Any]:
 
 
 def _stable_rule_id(rule: dict[str, Any]) -> str:
-    digest = hashlib.sha256(_signature(rule).encode("utf-8")).hexdigest()[:12]
-    return f"cpr-{digest}"
+    return f"cpr-{hashlib.sha256(_signature(rule).encode('utf-8')).hexdigest()[:12]}"
 
 
 def _signature(rule: dict[str, Any]) -> str:
@@ -211,6 +263,9 @@ def _signature(rule: dict[str, Any]) -> str:
     return json.dumps(core, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
+# ---- dedup / fold merge ---------------------------------------------------------------
+
+
 def _deduplicate(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_signature: dict[str, dict[str, Any]] = {}
     for rule in rules:
@@ -218,33 +273,30 @@ def _deduplicate(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if signature not in by_signature:
             by_signature[signature] = rule
             continue
-        _merge_duplicate(by_signature[signature], rule)
+        _merge_rules(by_signature[signature], rule)
     return list(by_signature.values())
 
 
-def _merge_duplicate(target: dict[str, Any], duplicate: dict[str, Any]) -> None:
-    target["source_rule_ids"] = sorted(
-        set(target["source_rule_ids"] + duplicate["source_rule_ids"])
-    )
-    target["policy_source"] = _merge_sources(
-        target["policy_source"], duplicate["policy_source"]
-    )
+def _merge_rules(target: dict[str, Any], other: dict[str, Any]) -> None:
+    target["source_rule_ids"] = sorted(set(target["source_rule_ids"] + other["source_rule_ids"]))
+    target["policy_source"] = _merge_sources(target["policy_source"], other["policy_source"])
     for key in (
         "credit_documentation_fields_needed",
         "evidence_required",
         "test_cases",
         "ambiguities_or_review_flags",
+        "group_ids",
     ):
-        target[key] = _unique(target[key] + duplicate[key])
+        target[key] = _unique(target[key] + other[key])
     for field in APPLICABILITY_FIELDS:
         target["applies_to"][field] = _unique(
-            target["applies_to"][field] + duplicate["applies_to"][field]
+            target["applies_to"][field] + other["applies_to"][field]
         )
     target["human_review_status"] = _merge_review_status(
-        target["human_review_status"], duplicate["human_review_status"]
+        target["human_review_status"], other["human_review_status"]
     )
     target["implementation_readiness"] = _more_cautious_readiness(
-        target["implementation_readiness"], duplicate["implementation_readiness"]
+        target["implementation_readiness"], other["implementation_readiness"]
     )
 
 
@@ -258,45 +310,46 @@ def _merge_sources(first: dict[str, Any], second: dict[str, Any]) -> dict[str, A
     return result
 
 
-def _flag_conflicts_and_overlaps(rules: list[dict[str, Any]]) -> None:
-    for index, first in enumerate(rules):
-        for second in rules[index + 1 :]:
-            name_score = SequenceMatcher(
-                None, _normalized_text(first["rule_name"]), _normalized_text(second["rule_name"])
-            ).ratio()
-            objective_match = _normalized_text(first["check_objective"]) == _normalized_text(
-                second["check_objective"]
-            )
-            same_topic = name_score == 1 or (objective_match and first["check_objective"])
-            if same_topic:
-                _add_pair_flag(
-                    first,
-                    second,
-                    "Possible policy conflict: matching rule topic has different check logic, "
-                    "evidence, applicability, severity, or requirement.",
-                )
-                first["implementation_readiness"] = "needs_policy_owner_review"
-                second["implementation_readiness"] = "needs_policy_owner_review"
-            elif first["rule_type"] == second["rule_type"] and name_score >= 0.8:
-                _add_pair_flag(
-                    first,
-                    second,
-                    "Potential rule overlap: kept separate because the requirements are not "
-                    "identical.",
-                )
+# ---- groups + readiness ---------------------------------------------------------------
 
 
-def _add_pair_flag(
-    first: dict[str, Any], second: dict[str, Any], message: str
-) -> None:
-    first_flag = f"{message} Related rule: {second['rule_id']}."
-    second_flag = f"{message} Related rule: {first['rule_id']}."
-    first["ambiguities_or_review_flags"] = _unique(
-        first["ambiguities_or_review_flags"] + [first_flag]
-    )
-    second["ambiguities_or_review_flags"] = _unique(
-        second["ambiguities_or_review_flags"] + [second_flag]
-    )
+def _attach_groups(
+    rules: list[dict[str, Any]], rule_groups_raw: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    by_id = {rule["rule_id"]: rule for rule in rules}
+    groups: list[dict[str, Any]] = []
+    for raw in rule_groups_raw:
+        members = _unique([rid for rid in raw.get("member_rule_ids", []) if rid in by_id])
+        if len(members) < 2:
+            continue  # a group needs at least two surviving members
+        relationship = raw.get("relationship_type", "overlaps")
+        if relationship not in RELATIONSHIP_TYPES:
+            relationship = "overlaps"
+        group = {
+            "group_id": _stable_group_id(members, relationship),
+            "theme": raw.get("theme", "Related rules"),
+            "relationship_type": relationship,
+            "member_rule_ids": sorted(members),
+            "rationale": raw.get("rationale", ""),
+            "human_review_status": raw.get("human_review_status", "pending_review"),
+        }
+        groups.append(group)
+        for member in members:
+            rule = by_id[member]
+            rule["group_ids"] = _unique(rule["group_ids"] + [group["group_id"]])
+            if relationship == "conflicts":
+                rule["implementation_readiness"] = "needs_policy_owner_review"
+                rule["ambiguities_or_review_flags"] = _unique(
+                    rule["ambiguities_or_review_flags"]
+                    + [f"Possible policy conflict flagged in group {group['group_id']}."]
+                )
+    groups.sort(key=lambda group: group["group_id"])
+    return groups
+
+
+def _stable_group_id(members: list[str], relationship: str) -> str:
+    payload = json.dumps([sorted(members), relationship], sort_keys=True)
+    return f"grp-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]}"
 
 
 def _enforce_readiness(rule: dict[str, Any]) -> None:
@@ -304,9 +357,7 @@ def _enforce_readiness(rule: dict[str, Any]) -> None:
     has_conflict = any("conflict" in flag.lower() for flag in flags)
     source = rule["policy_source"]
     has_source_support = bool(
-        source.get("policy_name")
-        and source.get("document_name")
-        and source.get("quote")
+        source.get("policy_name") and source.get("document_name") and source.get("quote")
     )
     has_check_logic = bool(
         rule["credit_documentation_fields_needed"]
@@ -332,9 +383,7 @@ def _enforce_readiness(rule: dict[str, Any]) -> None:
 
 
 def _merge_review_status(first: str, second: str) -> str:
-    if first == second:
-        return first
-    return "pending_review"
+    return first if first == second else "pending_review"
 
 
 def _more_cautious_readiness(first: str, second: str) -> str:
@@ -360,4 +409,4 @@ def _unique(items: list[Any]) -> list[Any]:
 
 
 def _normalized_text(value: str) -> str:
-    return re.sub(r"\s+", " ", value.lower()).strip()
+    return re.sub(r"\s+", " ", (value or "").lower()).strip()

@@ -4,12 +4,15 @@
     "knowledge_base_name",
     "created_from_documents",
     "rules",
+    "rule_groups",
+    "provenance",
     "processing_summary"
   ],
   "forbidden_top_level_keys": [
     "logs",
     "review_history",
     "policy_summary",
-    "ui_state"
+    "ui_state",
+    "definitions"
   ]
 }

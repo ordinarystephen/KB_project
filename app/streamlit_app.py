@@ -1,9 +1,11 @@
-"""Streamlit UI for the credit policy rules knowledge-base workflow."""
+"""Streamlit UI for the four-part credit policy rules knowledge-base workflow."""
 
-from datetime import datetime, timezone
+from __future__ import annotations
+
 import json
-from pathlib import Path
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
 
 import streamlit as st
 
@@ -14,16 +16,22 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.services.config import Settings
-from app.services.consolidation_service import consolidate_policy_extracts
-from app.services.document_loader import extract_document, save_uploaded_document
-from app.services.document_loader import SUPPORTED_EXTENSIONS
+from app.services.consolidation_service import finish_consolidation, start_consolidation
+from app.services.document_loader import (
+    SUPPORTED_EXTENSIONS,
+    extract_document,
+    save_uploaded_document,
+)
+from app.services.enrichment_service import approve_policy_kb, enrich_policy_kb, open_follow_ups
 from app.services.extraction_service import extract_policy_rules
 from app.services.file_utils import ensure_output_folders, relative_to_project
 from app.services.json_utils import load_json
 from app.services.llm_client import create_llm_client
 from app.services.metadata_store import load_manifest, upsert_document_metadata
-from app.services.review_service import review_policy_extraction
-
+from app.services.policy_kb_store import load_policy_kb
+from app.services.status import stage_hint
+from app.services.verification_service import verify_policy_kb
+from app.services.yaml_utils import dump_yaml, load_yaml
 
 SETTINGS = Settings()
 
@@ -34,18 +42,17 @@ def get_client():
     return create_llm_client(SETTINGS)
 
 
+def _yaml_files(folder: Path) -> list[Path]:
+    return sorted(folder.glob("*.yaml"))
+
+
 def _json_files(folder: Path) -> list[Path]:
     return sorted(folder.glob("*.json"))
 
 
-def _show_summary(summary: dict) -> None:
-    st.subheader("Processing summary")
-    st.json(summary)
-
-
 def _record_error(operation: str, error: Exception) -> None:
     SETTINGS.logs_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     path = SETTINGS.logs_dir / f"{operation}-{timestamp}.log"
     path.write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
     st.error(f"{operation} failed: {error}")
@@ -53,7 +60,7 @@ def _record_error(operation: str, error: Exception) -> None:
 
 
 def upload_section() -> None:
-    st.header("A. Upload Documents")
+    st.header("A. Upload documents")
     uploads = st.file_uploader(
         "Policy documents",
         type=["pdf", "docx", "txt", "md", "markdown"],
@@ -70,7 +77,7 @@ def upload_section() -> None:
                         "document_name": upload.name,
                         "policy_name": policy_name,
                         "policy_version": policy_version,
-                        "upload_timestamp": datetime.now(timezone.utc).isoformat(),
+                        "upload_timestamp": datetime.now(UTC).isoformat(),
                         "source_file_path": relative_to_project(path, SETTINGS),
                         "processing_status": "uploaded",
                     },
@@ -85,15 +92,15 @@ def upload_section() -> None:
 
 
 def extraction_section() -> None:
-    st.header("B. Extract Rules")
+    st.header("B. Part 1 — Extract draft KB")
     sources = sorted(
         path
         for path in SETTINGS.source_documents_dir.glob("*")
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
     )
     selected = st.selectbox("Uploaded document", sources, format_func=lambda p: p.name)
-    policy_name = st.text_input("Extraction policy name", key="extract_policy_name")
-    policy_version = st.text_input("Extraction policy version", key="extract_policy_version")
+    policy_name = st.text_input("Policy name", key="extract_policy_name")
+    policy_version = st.text_input("Policy version", key="extract_policy_version")
     use_di = st.checkbox(
         "Use Azure Document Intelligence for PDF/DOCX",
         value=SETTINGS.llm_mode == "azure",
@@ -101,70 +108,130 @@ def extraction_section() -> None:
     )
     if st.button("Extract policy rules", disabled=selected is None):
         try:
-            text, document = extract_document(
-                selected, SETTINGS, use_document_intelligence=use_di
+            text, document = extract_document(selected, SETTINGS, use_document_intelligence=use_di)
+            kb, path = extract_policy_rules(
+                text, document, policy_name, policy_version, get_client(), SETTINGS
             )
-            result, path = extract_policy_rules(
-                text,
-                document,
-                policy_name,
-                policy_version,
-                get_client(),
-                SETTINGS,
-            )
-            st.success(f"Saved {relative_to_project(path, SETTINGS)}")
-            st.metric("Rules extracted", len(result["rules"]))
-            _show_summary(result["processing_summary"])
+            st.success(f"Saved draft {relative_to_project(path, SETTINGS)}")
+            st.metric("Rules extracted", len(kb["rules"]))
         except Exception as exc:  # noqa: BLE001
             _record_error("extraction", exc)
 
 
-def review_section() -> None:
-    st.header("C. Review Extraction")
-    extracts = _json_files(SETTINGS.policy_extracts_dir)
-    selected = st.selectbox("Policy extraction", extracts, format_func=lambda p: p.name)
-    if st.button("Run completeness review", disabled=selected is None):
-        try:
-            extraction = load_json(selected)
-            text_path = SETTINGS.project_root / extraction["document"]["extracted_text_path"]
-            result, path = review_policy_extraction(
-                selected, text_path.read_text(encoding="utf-8"), get_client(), SETTINGS
+def _kb_label(path: Path) -> str:
+    try:
+        return f"{path.name}  ·  status: {load_policy_kb(path).get('status', '?')}"
+    except Exception:  # noqa: BLE001 - label fallback
+        return path.name
+
+
+def workbench_section() -> None:
+    st.header("C. Parts 2–3 — Verify, enrich, approve (Gate 1)")
+    kbs = _yaml_files(SETTINGS.policy_kbs_dir)
+    selected = st.selectbox("Per-policy KB", kbs, format_func=_kb_label)
+    if selected is None:
+        st.info("Extract a document in Part 1 to create a per-policy KB.")
+        return
+    kb = load_policy_kb(selected)
+    status = kb.get("status", "draft")
+    hint = stage_hint(status)
+    st.info(f"**Status `{status}`** — {hint.do}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Verify (Part 2)", disabled=status not in {"draft", "verified", "enriched"}):
+            try:
+                _, vpath = verify_policy_kb(selected, get_client(), SETTINGS)
+                st.success(f"Saved {relative_to_project(vpath, SETTINGS)}")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                _record_error("verification", exc)
+    with col2:
+        if st.button("Enrich (Part 3)", disabled=status not in {"verified", "enriched"}):
+            try:
+                vpath = (
+                    SETTINGS.verifications_dir / f"{kb['policy']['policy_id']}.verification.json"
+                )
+                enrich_policy_kb(selected, vpath, get_client(), SETTINGS)
+                st.success("Enriched; resolve follow-ups below, then approve.")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                _record_error("enrichment", exc)
+    with col3:
+        open_items = open_follow_ups(kb)
+        if st.button("Approve (Gate 1)", disabled=status != "enriched"):
+            try:
+                approve_policy_kb(selected, SETTINGS)
+                st.success("Approved — eligible for Part 4.")
+                st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                _record_error("approval", exc)
+        if status == "enriched" and open_items:
+            st.warning(
+                f"{len(open_items)} open follow-up item(s) — resolve in the YAML before approving."
             )
-            st.success(f"Saved {relative_to_project(path, SETTINGS)}")
-            _show_summary(result["processing_summary"])
-        except Exception as exc:  # noqa: BLE001
-            _record_error("review", exc)
+
+    vpath = SETTINGS.verifications_dir / f"{kb['policy']['policy_id']}.verification.json"
+    if vpath.exists():
+        with st.expander("Verification findings (Part 2)"):
+            st.json(load_json(vpath).get("processing_summary", {}))
+    if kb.get("follow_up_items"):
+        with st.expander("Follow-up items"):
+            st.json(kb["follow_up_items"])
+    with st.expander("KB YAML (edit on disk to resolve follow-ups)"):
+        st.code(dump_yaml(kb), language="yaml")
 
 
 def consolidation_section() -> None:
-    st.header("D. Consolidate Knowledge Base")
-    extracts = _json_files(SETTINGS.policy_extracts_dir)
-    selected = st.multiselect("Policy extractions", extracts, format_func=lambda p: p.name)
-    if st.button("Consolidate selected policies", disabled=len(selected) < 2):
+    st.header("D. Part 4 — Consolidate (Gate 2)")
+    kbs = _yaml_files(SETTINGS.policy_kbs_dir)
+    approved = [p for p in kbs if load_policy_kb(p).get("status") == "approved"]
+    st.caption(f"{len(approved)} approved KB(s) available for consolidation.")
+    selected = st.multiselect("Approved policy KBs", approved, format_func=lambda p: p.name)
+    if st.button("4a/4b — Find merge candidates", disabled=len(selected) < 2):
         try:
-            result, path = consolidate_policy_extracts(selected, get_client(), SETTINGS)
-            st.success(f"Saved {relative_to_project(path, SETTINGS)}")
-            st.metric("Checkable rules", len(result["rules"]))
-            _show_summary(result["processing_summary"])
+            _, worksheet, path = start_consolidation(selected, get_client(), SETTINGS)
+            st.success(f"Wrote {relative_to_project(path, SETTINGS)}")
+            st.caption(
+                "Edit each candidate's `decision:` (keep_separate or fold) and `fold_into:` in "
+                "that file, then run 4c below."
+            )
+            st.metric("Merge candidates", len(worksheet["candidates"]))
         except Exception as exc:  # noqa: BLE001
-            _record_error("consolidation", exc)
+            _record_error("consolidation-start", exc)
+
+    st.divider()
+    worksheets = _yaml_files(SETTINGS.merge_candidates_dir)
+    chosen = st.selectbox("Candidate worksheet", worksheets, format_func=lambda p: p.name)
+    if st.button("4c — Apply folds & consolidate", disabled=chosen is None):
+        try:
+            final, path = finish_consolidation(chosen, get_client(), SETTINGS)
+            st.success(f"Saved {relative_to_project(path, SETTINGS)}")
+            st.metric("Checkable rules", final["processing_summary"]["total_rules"])
+            st.metric("Relationship groups", final["processing_summary"]["total_rule_groups"])
+            st.json(final["processing_summary"])
+        except Exception as exc:  # noqa: BLE001
+            _record_error("consolidation-finish", exc)
 
 
 def browse_section() -> None:
-    st.header("E. Browse Outputs")
+    st.header("E. Browse outputs")
     category = st.selectbox(
-        "Output type",
-        ["Policy extracts", "Reviews", "Consolidated KB"],
+        "Output type", ["Policy KBs", "Merge candidates", "Verifications", "Consolidated KB"]
     )
-    folders = {
-        "Policy extracts": SETTINGS.policy_extracts_dir,
-        "Reviews": SETTINGS.reviews_dir,
-        "Consolidated KB": SETTINGS.consolidated_dir,
-    }
-    files = _json_files(folders[category])
-    selected = st.selectbox("Saved JSON", files, format_func=lambda p: p.name)
+    if category == "Policy KBs":
+        files, lang, loader = _yaml_files(SETTINGS.policy_kbs_dir), "yaml", load_yaml
+    elif category == "Merge candidates":
+        files, lang, loader = _yaml_files(SETTINGS.merge_candidates_dir), "yaml", load_yaml
+    elif category == "Verifications":
+        files, lang, loader = _json_files(SETTINGS.verifications_dir), "json", load_json
+    else:
+        files, lang, loader = _json_files(SETTINGS.consolidated_dir), "json", load_json
+    selected = st.selectbox("Saved file", files, format_func=lambda p: p.name)
     if selected is not None:
-        st.code(json.dumps(load_json(selected), indent=2), language="json")
+        payload = loader(selected)
+        text = dump_yaml(payload) if lang == "yaml" else json.dumps(payload, indent=2)
+        st.code(text, language=lang)
 
 
 def main() -> None:
@@ -173,11 +240,11 @@ def main() -> None:
     st.title("Credit Policy Rules Knowledge Base Workbench")
     st.info(
         "LLM output is a draft for human review, never an approved policy decision. "
-        f"Current mode: {SETTINGS.llm_mode}."
+        f"Current mode: {SETTINGS.llm_mode}. See docs/RUNBOOK.md for the step-by-step process."
     )
     upload_section()
     extraction_section()
-    review_section()
+    workbench_section()
     consolidation_section()
     browse_section()
 
