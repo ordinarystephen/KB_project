@@ -20,6 +20,19 @@ def _read_float(name: str, default: float) -> float:
         return default
 
 
+def _first_env(names: tuple[str, ...], default: str = "") -> str:
+    """Return the first non-empty value among env var aliases.
+
+    Lets the same Domino environment work whether it uses this app's names or the shared
+    canonical names (e.g. AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT, AZURE_DOCINTEL_ENDPOINT).
+    """
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
+
 @dataclass(frozen=True)
 class Settings:
     """Deployment settings with portable, repository-relative defaults."""
@@ -33,13 +46,22 @@ class Settings:
         default_factory=lambda: os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
     )
     azure_openai_embedding_deployment: str = field(
-        default_factory=lambda: os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "")
+        default_factory=lambda: _first_env(
+            ("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT", "AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+        )
     )
     azure_openai_api_version: str = field(
         default_factory=lambda: os.getenv("OPENAI_API_VERSION", "2025-04-01-preview")
     )
+    # In Domino, point this at the local proxy (e.g. https://127.0.0.1:8443); egress to the public
+    # *.cognitiveservices.azure.com endpoint is typically blocked.
     document_intelligence_endpoint: str = field(
-        default_factory=lambda: os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "")
+        default_factory=lambda: _first_env(
+            ("AZURE_DOCINTEL_ENDPOINT", "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
+        )
+    )
+    document_intelligence_api_version: str = field(
+        default_factory=lambda: os.getenv("DOCINTEL_API_VERSION", "2024-11-30")
     )
     similarity_threshold: float = field(
         default_factory=lambda: _read_float("KB_SIMILARITY_THRESHOLD", 0.86)

@@ -5,27 +5,39 @@ Azure OpenAI / Document Intelligence endpoints (including localhost gateways) an
 block page or a 404, which then surfaces inside the Azure SDK as a ``JSONDecodeError``. Adding the
 target hosts to ``NO_PROXY`` before the client is built makes the SDK connect directly.
 
-This only ever *relaxes* proxying for specific hosts (loopback is always safe); it never forces a
-proxy on. If your network genuinely requires the proxy to reach a public ``*.azure.com`` endpoint,
-that host should not be passed here.
+It only ever bypasses the proxy for **loopback/private** hosts (the local DI proxy and localhost
+gateways). A public endpoint such as ``*.openai.azure.com`` is left untouched, because the corporate
+proxy may legitimately be the required egress path to reach it.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from urllib.parse import urlparse
 
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 
+def _is_bypassable(host: str) -> bool:
+    """True only for loopback/private hosts; a public host may legitimately need the proxy."""
+    if host in _LOOPBACK:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False  # DNS hostname (e.g. *.openai.azure.com) -- leave proxy routing untouched
+    return ip.is_loopback or ip.is_private
+
+
 def ensure_direct_connection(*endpoints: str) -> None:
-    """Add loopback and the given endpoint hosts to NO_PROXY (idempotent, additive)."""
+    """Add loopback and any loopback/private endpoint hosts to NO_PROXY (idempotent, additive)."""
     hosts = set(_LOOPBACK)
     for endpoint in endpoints:
         if not endpoint:
             continue
         host = urlparse(endpoint).hostname
-        if host:
+        if host and _is_bypassable(host):
             hosts.add(host)
 
     existing: set[str] = set()

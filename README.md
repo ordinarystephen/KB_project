@@ -124,26 +124,41 @@ Set these variables in the target environment:
 
 ```bash
 export KB_LLM_MODE=azure
-export AZURE_OPENAI_ENDPOINT='https://<resource>.openai.azure.com/'
+export AZURE_OPENAI_ENDPOINT='https://<resource>.openai.azure.com/'   # real Azure endpoint
 export AZURE_OPENAI_DEPLOYMENT='gpt-4o'
 export OPENAI_API_VERSION='2025-04-01-preview'
-export AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT='https://<resource>.cognitiveservices.azure.com/'
+# Document Intelligence in Domino goes through the local proxy; egress to the public
+# *.cognitiveservices.azure.com endpoint is typically blocked.
+export AZURE_DOCINTEL_ENDPOINT='https://127.0.0.1:8443'
+export DOCINTEL_API_VERSION='2024-11-30'
 # Optional: enables embedding-based similarity for Part 4b. Without it, a deterministic
 # token-set fallback is used, so consolidation still works.
-export AZURE_OPENAI_EMBEDDING_DEPLOYMENT='text-embedding-3-large'
+export AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT='text-embedding-3-large'
 # Optional: near-duplicate fold threshold (default 0.86).
 export KB_SIMILARITY_THRESHOLD='0.86'
 uv run streamlit run app/streamlit_app.py
 ```
 
+**Do not set** `AZURE_OPENAI_API_KEY` (unused — AAD bearer tokens are used) or, especially,
+`AZURE_OPENAI_AD_TOKEN` (a pinned token bypasses credential rotation and fails when it expires; let
+`DefaultAzureCredential` supply rotating tokens). The app launches an **Azure connection status**
+panel that flags missing required variables and warns if either of these is set. Endpoint/deployment
+names also accept the SDK-standard aliases `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` and
+`AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`.
+
 Implementation notes for the Azure path:
 
+- Authentication is one cached `DefaultAzureCredential` → bearer-token provider (scope
+  `https://cognitiveservices.azure.com/.default`) for both OpenAI and Document Intelligence; the SDK
+  reads and refreshes the token (the app never handles a token string).
 - The LLM uses Azure OpenAI **Structured Outputs** (`json_schema`), which Microsoft recommends over the
   older `json_object` JSON mode for gpt-4o; deterministic schema validation still runs in the services.
-- Document Intelligence uses the `prebuilt-layout` model with `output_content_format=MARKDOWN`, so
-  headings and page anchors reach the LLM and per-rule `section`/`page` citations are grounded.
-- Part 4b similarity uses Azure OpenAI embeddings when `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` is set,
-  otherwise a deterministic token-set fallback.
+- Document Intelligence uses the `prebuilt-layout` model with `output_content_format=MARKDOWN` (so
+  headings and page anchors reach the LLM), the credential object directly, and the pinned
+  `DOCINTEL_API_VERSION`. SSL trust for the local proxy comes from the system CA bundle — the code
+  never sets `verify=False`.
+- Part 4b similarity uses Azure OpenAI embeddings when an embeddings deployment is set, otherwise a
+  deterministic token-set fallback.
 
 TXT and Markdown inputs are read directly. In the UI, enable Azure Document Intelligence for PDF or
 DOCX extraction. Azure calls (LLM, embeddings, DI) are deliberately outside automated tests; complete a

@@ -169,11 +169,26 @@ def test_verification_normalizes_incomplete_summary(settings) -> None:
     assert result["ready_for_consolidation"] is True
 
 
-def test_ensure_direct_connection_adds_loopback_and_host(monkeypatch) -> None:
+def test_ensure_direct_connection_bypasses_only_local_hosts(monkeypatch) -> None:
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)
-    ensure_direct_connection("https://myresource.openai.azure.com/")
+    ensure_direct_connection("https://127.0.0.1:8443", "https://myresource.openai.azure.com/")
     no_proxy = os.environ["NO_PROXY"]
-    assert "localhost" in no_proxy
-    assert "myresource.openai.azure.com" in no_proxy
+    assert "localhost" in no_proxy and "127.0.0.1" in no_proxy
+    # A public Azure host must NOT be bypassed: the corporate proxy may be its required egress path.
+    assert "myresource.openai.azure.com" not in no_proxy
     assert os.environ["no_proxy"] == no_proxy
+
+
+def test_azure_status_flags_missing_required_and_pinned_token(monkeypatch) -> None:
+    from app.services.azure_health import azure_status
+    from app.services.config import Settings
+
+    monkeypatch.setenv("KB_LLM_MODE", "azure")
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_AD_TOKEN", "pinned-token")
+    status = azure_status(Settings())
+    assert "AZURE_OPENAI_ENDPOINT" in status["missing_required"]
+    assert any("AD_TOKEN" in warning for warning in status["warnings"])
+    assert status["credential_chain"] == "DefaultAzureCredential"
+    assert status["token_scope"] == "https://cognitiveservices.azure.com/.default"

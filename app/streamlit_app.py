@@ -16,6 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.services.azure_health import azure_status
 from app.services.config import Settings
 from app.services.consolidation_service import finish_consolidation, start_consolidation
 from app.services.document_loader import (
@@ -248,6 +249,21 @@ def browse_section() -> None:
         st.code(text, language=lang)
 
 
+def _azure_preflight() -> None:
+    """Surface missing Azure config and credential warnings at launch, not 3 layers deep."""
+    status = azure_status(SETTINGS)
+    if status["missing_required"]:
+        st.error(
+            "Missing required Azure settings: "
+            + ", ".join(status["missing_required"])
+            + ". Set them in the Domino environment before extracting or consolidating."
+        )
+    for warning in status["warnings"]:
+        st.warning(warning)
+    with st.expander("Azure connection status"):
+        st.json(status)
+
+
 def main() -> None:
     st.set_page_config(page_title="Credit Policy Rules KB", layout="wide")
     ensure_output_folders(SETTINGS)
@@ -256,6 +272,8 @@ def main() -> None:
         "LLM output is a draft for human review, never an approved policy decision. "
         f"Current mode: {SETTINGS.llm_mode}. See docs/RUNBOOK.md for the step-by-step process."
     )
+    if SETTINGS.llm_mode == "azure":
+        _azure_preflight()
     upload_section()
     extraction_section()
     workbench_section()

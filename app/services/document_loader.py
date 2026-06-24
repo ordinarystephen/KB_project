@@ -75,7 +75,7 @@ def _read_local(path: Path) -> str:
     raise ValueError(f"Unsupported document type: {suffix}")
 
 
-def _read_with_document_intelligence(content: bytes, endpoint: str) -> str:
+def _read_with_document_intelligence(content: bytes, endpoint: str, api_version: str) -> str:
     """Extract structure-preserving Markdown using Azure Document Intelligence.
 
     Markdown output (``output_content_format=MARKDOWN``) keeps headings, tables, and page anchors
@@ -83,7 +83,10 @@ def _read_with_document_intelligence(content: bytes, endpoint: str) -> str:
     rule comes from. Microsoft recommends Markdown for LLM/RAG consumption of the layout model.
     """
     if not endpoint:
-        raise ValueError("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT is required")
+        raise ValueError(
+            "Document Intelligence endpoint is required "
+            "(set AZURE_DOCINTEL_ENDPOINT, e.g. https://127.0.0.1:8443 in Domino)"
+        )
     try:
         from azure.ai.documentintelligence import DocumentIntelligenceClient
         from azure.ai.documentintelligence.models import (
@@ -98,7 +101,9 @@ def _read_with_document_intelligence(content: bytes, endpoint: str) -> str:
 
     ensure_direct_connection(endpoint)
     credential = get_azure_credential()
-    client = DocumentIntelligenceClient(endpoint=endpoint, credential=credential)
+    client = DocumentIntelligenceClient(
+        endpoint=endpoint, credential=credential, api_version=api_version
+    )
     poller = client.begin_analyze_document(
         "prebuilt-layout",
         AnalyzeDocumentRequest(bytes_source=content),
@@ -117,7 +122,11 @@ def extract_document(
     content = path.read_bytes()
     content_hash = hashlib.sha256(content).hexdigest()
     if use_document_intelligence and path.suffix.lower() not in {".txt", ".md", ".markdown"}:
-        text = _read_with_document_intelligence(content, settings.document_intelligence_endpoint)
+        text = _read_with_document_intelligence(
+            content,
+            settings.document_intelligence_endpoint,
+            settings.document_intelligence_api_version,
+        )
     else:
         text = _read_local(path)
     if not text.strip():

@@ -34,3 +34,17 @@ def test_similarity_threshold_reads_from_environment(monkeypatch) -> None:
 def test_invalid_similarity_threshold_falls_back_to_default(monkeypatch) -> None:
     monkeypatch.setenv("KB_SIMILARITY_THRESHOLD", "not-a-number")
     assert Settings().similarity_threshold == 0.86
+
+
+def test_embedding_deployment_reads_canonical_alias(monkeypatch) -> None:
+    monkeypatch.delenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT", "text-embedding-3-large")
+    assert Settings().azure_openai_embedding_deployment == "text-embedding-3-large"
+
+
+def test_docintel_endpoint_alias_and_pinned_api_version(monkeypatch) -> None:
+    monkeypatch.delenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", raising=False)
+    monkeypatch.setenv("AZURE_DOCINTEL_ENDPOINT", "https://127.0.0.1:8443")
+    settings = Settings()
+    assert settings.document_intelligence_endpoint == "https://127.0.0.1:8443"
+    assert settings.document_intelligence_api_version == "2024-11-30"
